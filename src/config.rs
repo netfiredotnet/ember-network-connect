@@ -10,6 +10,7 @@ const DEFAULT_GATEWAY: &str = "192.168.42.1";
 const DEFAULT_DHCP_RANGE: &str = "192.168.42.2,192.168.42.254";
 const DEFAULT_SSID: &str = "WiFi Connect";
 const DEFAULT_ACTIVITY_TIMEOUT: &str = "0";
+const DEFAULT_OVERALL_TIMEOUT: &str = "0";
 const DEFAULT_UI_DIRECTORY: &str = "ui";
 const DEFAULT_LISTENING_PORT: &str = "80";
 
@@ -22,6 +23,7 @@ pub struct Config {
     pub dhcp_range: String,
     pub listening_port: u16,
     pub activity_timeout: u64,
+    pub overall_timeout: u64,
     pub ui_directory: PathBuf,
 }
 
@@ -99,6 +101,14 @@ pub fn get_config() -> Config {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("overall-timeout")
+                .short("n")
+                .long("overall-timeout")
+                .value_name("overall_timeout")
+                .help("Overall timeout that will stop the server, even if a connection was made (seconds) (default: none)")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("ui-directory")
                 .short("u")
                 .long("ui-directory")
@@ -153,6 +163,11 @@ pub fn get_config() -> Config {
         String::from,
     )).expect("Cannot parse activity timeout");
 
+    let overall_timeout = u64::from_str(&matches.value_of("overall-timeout").map_or_else(
+        || env::var("OVERALL_TIMEOUT").unwrap_or_else(|_| DEFAULT_OVERALL_TIMEOUT.to_string()),
+        String::from,
+    )).expect("Cannot parse overall timeout");
+
     let ui_directory = get_ui_directory(matches.value_of("ui-directory"));
 
     Config {
@@ -163,6 +178,7 @@ pub fn get_config() -> Config {
         dhcp_range: dhcp_range,
         listening_port: listening_port,
         activity_timeout: activity_timeout,
+        overall_timeout: overall_timeout,
         ui_directory: ui_directory,
     }
 }

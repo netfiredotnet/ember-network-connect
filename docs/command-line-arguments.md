@@ -54,6 +54,12 @@ Command line options have environment variable counterpart. If both a command li
 
     Default: _0 - no timeout_
 
+*   **-n, --overall-timeout** timeout, **$OVERALL_TIMEOUT**
+
+    Overall timeout that will stop the server, even if a connection was made (seconds)
+
+    Default: _0 - no timeout_
+
 *   **-u, --ui-directory** ui_directory, **$UI_DIRECTORY**
 
     Web UI directory location

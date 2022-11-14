@@ -19,6 +19,7 @@ use server::start_server;
 pub enum NetworkCommand {
     Activate,
     Timeout,
+    OverallTimeout,
     Exit,
     Connect {
         ssid: String,
@@ -71,6 +72,7 @@ impl NetworkCommandHandler {
         Self::spawn_server(config, exit_tx, server_rx, network_tx.clone());
 
         Self::spawn_activity_timeout(config, network_tx.clone());
+        Self::spawn_overall_timeout(config, network_tx.clone());
 
         let config = config.clone();
         let activated = false;
@@ -130,6 +132,24 @@ impl NetworkCommandHandler {
         });
     }
 
+    fn spawn_overall_timeout(config: &Config, network_tx: Sender<NetworkCommand>) {
+        let overall_timeout = config.overall_timeout;
+
+        if overall_timeout == 0 {
+            return;
+        }
+
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(overall_timeout));
+            if let Err(err) = network_tx.send(NetworkCommand::OverallTimeout) {
+                error!(
+                    "Sending NetworkCommand::Timeout failed: {}",
+                    err.description()
+                );
+            }
+        });
+    }
+
     fn spawn_trap_exit_signals(exit_tx: &Sender<ExitResult>, network_tx: Sender<NetworkCommand>) {
         let exit_tx_trap = exit_tx.clone();
 
@@ -157,6 +177,10 @@ impl NetworkCommandHandler {
             match command {
                 NetworkCommand::Activate => {
                     self.activate()?;
+                },
+                NetworkCommand::OverallTimeout => {
+                    info!("Overall timeout reached. Exiting...");
+                    return Ok(());
                 },
                 NetworkCommand::Timeout => {
                     if !self.activated {
