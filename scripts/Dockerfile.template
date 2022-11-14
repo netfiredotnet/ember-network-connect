@@ -1,0 +1,23 @@
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian
+
+# See https://github.com/balena-os/wifi-connect/pull/450
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  ca-certificates \
+  dnsmasq \
+  iw \
+  wget \
+  wireless-tools && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/app
+
+ARG VERSION="4.4.0"
+RUN curl -Ls "https://github.com/netfiredotnet/ember-network-connect/releases/download/v$VERSION/ember-network-connect-v$VERSION-linux-%%BALENA_ARCH%%.tar.gz" \
+  | tar -xvz -C  /usr/src/app/
+
+COPY scripts/start.sh .
+
+CMD ["bash", "start.sh"]
