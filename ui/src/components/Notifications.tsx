@@ -16,9 +16,9 @@ export const Notifications = ({
 				<Alert m={2} info>
 					<Txt.span>Applying changes... </Txt.span>
 					<Txt.span>
-						Your device will soon be online. If connection is unsuccessful, the
-						Access Point will be back up in a few minutes, and reloading this
-						page will allow you to try again.
+						Please ask NetFire staff to check connectivity to the device. If you
+						need to make any port changes or other network config changes, you
+						may do so now.
 					</Txt.span>
 				</Alert>
 			)}

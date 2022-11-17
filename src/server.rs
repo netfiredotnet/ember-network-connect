@@ -142,8 +142,7 @@ pub fn start_server(
 
     let mut router = Router::new();
     router.get("/", Static::new(ui_directory), "index");
-    router.get("/networks", networks, "networks");
-    router.post("/connect", connect, "connect");
+    router.post("/reset_dhcp", reset_dhcp, "reset_dhcp");
 
     let mut assets = Mount::new();
     assets.mount("/", router);
@@ -171,51 +170,18 @@ pub fn start_server(
     }
 }
 
-fn networks(req: &mut Request) -> IronResult<Response> {
-    info!("User connected to the captive portal");
+
+fn reset_dhcp(req: &mut Request) -> IronResult<Response> {
+
+    debug!("Requested DHCP reset");
 
     let request_state = get_request_state!(req);
 
-    if let Err(e) = request_state.network_tx.send(NetworkCommand::Activate) {
-        return exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandActivate);
-    }
-
-    let networks = match request_state.server_rx.recv() {
-        Ok(result) => match result {
-            NetworkCommandResponse::Networks(networks) => networks,
-        },
-        Err(e) => return exit_with_error(&request_state, e, ErrorKind::RecvAccessPointSSIDs),
-    };
-
-    let access_points_json = match serde_json::to_string(&networks) {
-        Ok(json) => json,
-        Err(e) => return exit_with_error(&request_state, e, ErrorKind::SerializeAccessPointSSIDs),
-    };
-
-    Ok(Response::with((status::Ok, access_points_json)))
-}
-
-fn connect(req: &mut Request) -> IronResult<Response> {
-    let (ssid, identity, passphrase) = {
-        let params = get_request_ref!(req, Params, "Getting request params failed");
-        let ssid = get_param!(params, "ssid", String);
-        let identity = get_param!(params, "identity", String);
-        let passphrase = get_param!(params, "passphrase", String);
-        (ssid, identity, passphrase)
-    };
-
-    debug!("Incoming `connect` to access point `{}` request", ssid);
-
-    let request_state = get_request_state!(req);
-
-    let command = NetworkCommand::Connect {
-        ssid: ssid,
-        identity: identity,
-        passphrase: passphrase,
+    let command = NetworkCommand::Reset {
     };
 
     if let Err(e) = request_state.network_tx.send(command) {
-        exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandConnect)
+        exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandReset)
     } else {
         Ok(Response::with(status::Ok))
     }

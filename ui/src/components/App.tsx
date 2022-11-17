@@ -39,29 +39,11 @@ const App = () => {
 		[],
 	);
 
-	React.useEffect(() => {
-		fetch('/networks')
-			.then((data) => {
-				if (data.status !== 200) {
-					throw new Error(data.statusText);
-				}
-
-				return data.json();
-			})
-			.then(setAvailableNetworks)
-			.catch((e: Error) => {
-				setError(`Failed to fetch available networks. ${e.message || e}`);
-			})
-			.finally(() => {
-				setIsFetchingNetworks(false);
-			});
-	}, []);
-
-	const onConnect = (data: NetworkInfo) => {
+	const onReset = (data: NetworkInfo) => {
 		setAttemptedConnect(true);
 		setError('');
 
-		fetch('/connect', {
+		fetch('/reset_dhcp', {
 			method: 'POST',
 			body: JSON.stringify(data),
 			headers: {
@@ -74,14 +56,17 @@ const App = () => {
 				}
 			})
 			.catch((e: Error) => {
-				setError(`Failed to connect to the network. ${e.message || e}`);
+				setError(`Failed to reset DHCP. ${e.message || e}`);
 			});
 	};
 
 	return (
 		<Provider>
 			<GlobalStyle />
-			<Navbar brand={<img src={logo} style={{ height: 30 }} alt="logo" />} />
+			<Navbar
+				brand={<img src={logo} style={{ height: 30 }} alt="logo" />}
+				style={{ backgroundColor: '#29292F' }}
+			/>
 
 			<Container>
 				<Notifications
@@ -91,10 +76,7 @@ const App = () => {
 					}
 					error={error}
 				/>
-				<NetworkInfoForm
-					availableNetworks={availableNetworks}
-					onSubmit={onConnect}
-				/>
+				<NetworkInfoForm onSubmit={onReset} />
 			</Container>
 		</Provider>
 	);

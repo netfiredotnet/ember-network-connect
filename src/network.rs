@@ -8,24 +8,19 @@ use std::collections::HashSet;
 
 use network_manager::{AccessPoint, AccessPointCredentials, Connection, ConnectionState,
                       Connectivity, Device, DeviceState, DeviceType, NetworkManager, Security,
-                      ServiceState};
-
+                      ServiceState, EthernetDevice};
 use errors::*;
 use exit::{exit, trap_exit_signals, ExitResult};
 use config::Config;
 use dnsmasq::{start_dnsmasq, stop_dnsmasq};
 use server::start_server;
+use std::string::ToString;
 
 pub enum NetworkCommand {
-    Activate,
     Timeout,
     OverallTimeout,
     Exit,
-    Connect {
-        ssid: String,
-        identity: String,
-        passphrase: String,
-    },
+    Reset,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -41,7 +36,7 @@ pub enum NetworkCommandResponse {
 struct NetworkCommandHandler {
     manager: NetworkManager,
     device: Device,
-    access_points: Vec<AccessPoint>,
+    eth_device: Device,
     portal_connection: Option<Connection>,
     config: Config,
     dnsmasq: process::Child,
@@ -60,8 +55,7 @@ impl NetworkCommandHandler {
         debug!("NetworkManager connection initialized");
 
         let device = find_device(&manager, &config.interface)?;
-
-        let access_points = get_access_points(&device)?;
+        let eth_device = find_device(&manager, &Some(String::from("eth0")))?;
 
         let portal_connection = Some(create_portal(&device, config)?);
 
@@ -80,7 +74,7 @@ impl NetworkCommandHandler {
         Ok(NetworkCommandHandler {
             manager,
             device,
-            access_points,
+            eth_device,
             portal_connection,
             config,
             dnsmasq,
@@ -175,16 +169,13 @@ impl NetworkCommandHandler {
             let command = self.receive_network_command()?;
 
             match command {
-                NetworkCommand::Activate => {
-                    self.activate()?;
-                },
                 NetworkCommand::OverallTimeout => {
                     info!("Overall timeout reached. Exiting...");
                     return Ok(());
                 },
                 NetworkCommand::Timeout => {
                     if !self.activated {
-                        info!("Timeout reached. Exiting...");
+                        info!("Connect timeout reached. Exiting...");
                         return Ok(());
                     }
                 },
@@ -192,14 +183,8 @@ impl NetworkCommandHandler {
                     info!("Exiting...");
                     return Ok(());
                 },
-                NetworkCommand::Connect {
-                    ssid,
-                    identity,
-                    passphrase,
-                } => {
-                    if self.connect(&ssid, &identity, &passphrase)? {
-                        return Ok(());
-                    }
+                NetworkCommand::Reset  => {
+                    self.set_dhcp();
                 },
             }
         }
@@ -226,72 +211,29 @@ impl NetworkCommandHandler {
         let _ = exit_tx.send(result);
     }
 
-    fn activate(&mut self) -> ExitResult {
-        self.activated = true;
+    fn set_dhcp(&mut self) {
+        info!("DHCP reset requested. Removing all existing wired connections...");
+        delete_existing_wired_connections(&self.manager);
 
-        let networks = get_networks(&self.access_points);
+        // let devices = &self.manager.get_devices().unwrap();
+        // for d in devices {
+        //     info!("Path: {} | Type: {} | Interface: {}", d.path(), d.device_type().to_string(), d.interface());
+        //     // let i = devices.iter().position(|ref d| *d.device_type() == DeviceType::Ethernet).unwrap();
+        //     // d.connect().unwrap();
+        // }
 
-        self.server_tx
-            .send(NetworkCommandResponse::Networks(networks))
-            .chain_err(|| ErrorKind::SendAccessPointSSIDs)
-    }
-
-    fn connect(&mut self, ssid: &str, identity: &str, passphrase: &str) -> Result<bool> {
-        delete_existing_connections_to_same_network(&self.manager, ssid);
-
-        if let Some(ref connection) = self.portal_connection {
-            stop_portal(connection, &self.config)?;
-        }
-
-        self.portal_connection = None;
-
-        self.access_points = get_access_points(&self.device)?;
-
-        if let Some(access_point) = find_access_point(&self.access_points, ssid) {
-            let wifi_device = self.device.as_wifi_device().unwrap();
-
-            info!("Connecting to access point '{}'...", ssid);
-
-            let credentials = init_access_point_credentials(access_point, identity, passphrase);
-
-            match wifi_device.connect(access_point, &credentials) {
-                Ok((connection, state)) => {
-                    if state == ConnectionState::Activated {
-                        match wait_for_connectivity(&self.manager, 20) {
-                            Ok(has_connectivity) => {
-                                if has_connectivity {
-                                    info!("Internet connectivity established");
-                                } else {
-                                    warn!("Cannot establish Internet connectivity");
-                                }
-                            },
-                            Err(err) => error!("Getting Internet connectivity failed: {}", err),
-                        }
-
-                        return Ok(true);
-                    }
-
-                    if let Err(err) = connection.delete() {
-                        error!("Deleting connection object failed: {}", err)
-                    }
-
-                    warn!(
-                        "Connection to access point not activated '{}': {:?}",
-                        ssid, state
-                    );
-                },
-                Err(e) => {
-                    warn!("Error connecting to access point '{}': {}", ssid, e);
-                },
+        info!("Creating new DHCP connection profile...");
+        let ethernet_device = self.eth_device.as_ethernet_device().unwrap();
+        match ethernet_device.set_dhcp() {
+            Err(e) => {
+                error!("Setting DHCP failed: {}", e.description());
             }
-        }
+            Ok(_) => (),
+        };
 
-        self.access_points = get_access_points(&self.device)?;
-
-        self.portal_connection = Some(create_portal(&self.device, &self.config)?);
-
-        Ok(false)
     }
+
+
 }
 
 fn init_access_point_credentials(
@@ -343,15 +285,7 @@ pub fn find_device(manager: &NetworkManager, interface: &Option<String>) -> Resu
             .get_device_by_interface(interface)
             .chain_err(|| ErrorKind::DeviceByInterface(interface.clone()))?;
 
-        info!("Targeted WiFi device: {}", interface);
-
-        if *device.device_type() != DeviceType::WiFi {
-            bail!(ErrorKind::NotAWiFiDevice(interface.clone()))
-        }
-
-        if device.get_state()? == DeviceState::Unmanaged {
-            bail!(ErrorKind::UnmanagedDevice(interface.clone()))
-        }
+        info!("Targeted device: {}", interface);
 
         Ok(device)
     } else {
@@ -378,52 +312,6 @@ fn find_wifi_managed_device(devices: Vec<Device>) -> Result<Option<Device>> {
     Ok(None)
 }
 
-fn get_access_points(device: &Device) -> Result<Vec<AccessPoint>> {
-    get_access_points_impl(device).chain_err(|| ErrorKind::NoAccessPoints)
-}
-
-fn get_access_points_impl(device: &Device) -> Result<Vec<AccessPoint>> {
-    let retries_allowed = 10;
-    let mut retries = 0;
-
-    // After stopping the hotspot we may have to wait a bit for the list
-    // of access points to become available
-    while retries < retries_allowed {
-        let wifi_device = device.as_wifi_device().unwrap();
-        let mut access_points = wifi_device.get_access_points()?;
-
-        access_points.retain(|ap| ap.ssid().as_str().is_ok());
-
-        // Purge access points with duplicate SSIDs
-        let mut inserted = HashSet::new();
-        access_points.retain(|ap| inserted.insert(ap.ssid.clone()));
-
-        // Remove access points without SSID (hidden)
-        access_points.retain(|ap| !ap.ssid().as_str().unwrap().is_empty());
-
-        if !access_points.is_empty() {
-            info!(
-                "Access points: {:?}",
-                get_access_points_ssids(&access_points)
-            );
-            return Ok(access_points);
-        }
-
-        retries += 1;
-        debug!("No access points found - retry #{}", retries);
-        thread::sleep(Duration::from_secs(1));
-    }
-
-    warn!("No access points found - giving up...");
-    Ok(vec![])
-}
-
-fn get_access_points_ssids(access_points: &[AccessPoint]) -> Vec<&str> {
-    access_points
-        .iter()
-        .map(|ap| ap.ssid().as_str().unwrap())
-        .collect()
-}
 
 fn get_networks(access_points: &[AccessPoint]) -> Vec<Network> {
     access_points
@@ -453,17 +341,6 @@ fn get_network_security(access_point: &AccessPoint) -> &str {
     }
 }
 
-fn find_access_point<'a>(access_points: &'a [AccessPoint], ssid: &str) -> Option<&'a AccessPoint> {
-    for access_point in access_points.iter() {
-        if let Ok(access_point_ssid) = access_point.ssid().as_str() {
-            if access_point_ssid == ssid {
-                return Some(access_point);
-            }
-        }
-    }
-
-    None
-}
 
 fn create_portal(device: &Device, config: &Config) -> Result<Connection> {
     let portal_passphrase = config.passphrase.as_ref().map(|p| p as &str);
@@ -570,7 +447,7 @@ fn delete_exising_wifi_connect_ap_profile(ssid: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete_existing_connections_to_same_network(manager: &NetworkManager, ssid: &str) {
+fn delete_existing_wired_connections(manager: &NetworkManager) {
     let connections = match manager.get_connections() {
         Ok(connections) => connections,
         Err(e) => {
@@ -580,14 +457,13 @@ fn delete_existing_connections_to_same_network(manager: &NetworkManager, ssid: &
     };
 
     for connection in &connections {
-        if is_wifi_connection(connection) && is_same_ssid(connection, ssid) {
+        if is_wired_connection(connection){
             info!(
-                "Deleting existing WiFi connection to the same network: {:?}",
-                connection.settings().ssid,
+                "Deleting existing wired connection"
             );
 
             if let Err(e) = connection.delete() {
-                error!("Deleting existing WiFi connection failed: {}", e);
+                error!("Deleting existing wired connection failed: {}", e);
             }
         }
     }
@@ -608,4 +484,8 @@ fn is_access_point_connection(connection: &Connection) -> bool {
 
 fn is_wifi_connection(connection: &Connection) -> bool {
     connection.settings().kind == "802-11-wireless"
+}
+
+fn is_wired_connection(connection: &Connection) -> bool {
+    connection.settings().kind == "802-3-ethernet"
 }

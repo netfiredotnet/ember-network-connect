@@ -3,52 +3,9 @@ import * as React from 'react';
 import { Flex, Form, Heading, RenditionUiSchema } from 'rendition';
 import { Network, NetworkInfo } from './App';
 
-const getSchema = (availableNetworks: Network[]): JSONSchema => ({
-	type: 'object',
-	properties: {
-		ssid: {
-			title: 'SSID',
-			type: 'string',
-			default: availableNetworks[0]?.ssid,
-			oneOf: availableNetworks.map((network) => ({
-				const: network.ssid,
-				title: network.ssid,
-			})),
-		},
-		identity: {
-			title: 'User',
-			type: 'string',
-			default: '',
-		},
-		passphrase: {
-			title: 'Passphrase',
-			type: 'string',
-			default: '',
-		},
-	},
-	required: ['ssid'],
-});
+const getSchema = (): JSONSchema => ({});
 
-const getUiSchema = (isEnterprise: boolean): RenditionUiSchema => ({
-	ssid: {
-		'ui:placeholder': 'Select SSID',
-		'ui:options': {
-			emphasized: true,
-		},
-	},
-	identity: {
-		'ui:options': {
-			emphasized: true,
-		},
-		'ui:widget': !isEnterprise ? 'hidden' : undefined,
-	},
-	passphrase: {
-		'ui:widget': 'password',
-		'ui:options': {
-			emphasized: true,
-		},
-	},
-});
+const getUiSchema = (): RenditionUiSchema => ({});
 
 const isEnterpriseNetwork = (
 	networks: Network[],
@@ -61,20 +18,11 @@ const isEnterpriseNetwork = (
 };
 
 interface NetworkInfoFormProps {
-	availableNetworks: Network[];
 	onSubmit: (data: NetworkInfo) => void;
 }
 
-export const NetworkInfoForm = ({
-	availableNetworks,
-	onSubmit,
-}: NetworkInfoFormProps) => {
+export const NetworkInfoForm = ({ onSubmit }: NetworkInfoFormProps) => {
 	const [data, setData] = React.useState<NetworkInfo>({});
-
-	const isSelectedNetworkEnterprise = isEnterpriseNetwork(
-		availableNetworks,
-		data.ssid,
-	);
 
 	return (
 		<Flex
@@ -85,9 +33,24 @@ export const NetworkInfoForm = ({
 			mt={5}
 		>
 			<Heading.h3 align="center" mb={4}>
-				Hi! Please choose your WiFi from the list
+				Click the below button to reset this device's network settings to DHCP.
+				Any static IP settings will be lost.
 			</Heading.h3>
 
+			<style
+				dangerouslySetInnerHTML={{
+					__html: `
+					.mysubmit {
+						background-color: #E63D44;
+						border-color: #E63D44;
+					}
+					.mysubmit:hover, .mysubmit:focus, .mysubmit:active {
+						background-color: #EB656B !important;
+						border-color: #EB656B !important;
+					}
+				`,
+				}}
+			/>
 			<Form
 				width={['100%', '80%', '60%', '40%']}
 				onFormChange={({ formData }) => {
@@ -95,15 +58,15 @@ export const NetworkInfoForm = ({
 				}}
 				onFormSubmit={({ formData }) => onSubmit(formData)}
 				value={data}
-				schema={getSchema(availableNetworks)}
-				uiSchema={getUiSchema(isSelectedNetworkEnterprise)}
+				schema={getSchema()}
+				uiSchema={getUiSchema()}
 				submitButtonProps={{
 					width: '60%',
 					mx: '20%',
 					mt: 3,
-					disabled: availableNetworks.length <= 0,
+					className: 'mysubmit',
 				}}
-				submitButtonText={'Connect'}
+				submitButtonText={'Reset to DHCP'}
 			/>
 		</Flex>
 	);

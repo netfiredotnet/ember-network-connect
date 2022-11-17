@@ -5,7 +5,8 @@ authors = ["Zahari Petkov <zahari@balena.io>", "Brett Wilson <brett.wilson@netfi
 description = "Easy network setup for Linux devices from your mobile phone or laptop"
 
 [dependencies]
-network-manager = "0.11"
+#network-manager = "0.11"
+network-manager = { git = "https://github.com/netfiredotnet/network-manager.git" }
 clap = "2.24"
 iron = "0.6"
 iron-cors = "0.7"
