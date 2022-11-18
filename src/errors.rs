@@ -19,6 +19,10 @@ error_chain! {
             description("Receiving access point SSIDs failed")
         }
 
+        RecvTimer {
+            description("Receiving timer value failed")
+        }
+
         SendAccessPointSSIDs {
             description("Sending access point SSIDs failed")
         }
@@ -36,7 +40,11 @@ error_chain! {
         }
 
         SendNetworkCommandReset {
-            description("Sending NetworkCommand::Connect failed")
+            description("Sending NetworkCommand::Reset failed")
+        }
+
+        SendNetworkCommandGetTimer {
+            description("Sending NetworkCommand::GetTimer failed")
         }
 
         DeviceByInterface(interface: String) {
@@ -129,6 +137,8 @@ pub fn exit_code(e: &Error) -> i32 {
         ErrorKind::TrapExitSignals => 22,
         ErrorKind::RootPrivilegesRequired(_) => 23,
         ErrorKind::UnmanagedDevice(_) => 24,
+        ErrorKind::SendNetworkCommandGetTimer => 25,
+        ErrorKind::RecvTimer => 26,
         _ => 1,
     }
 }

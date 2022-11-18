@@ -1,19 +1,20 @@
-use std::thread;
-use std::process;
-use std::time::Duration;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::collections::HashSet;
 use std::error::Error;
 use std::net::Ipv4Addr;
-use std::collections::HashSet;
+use std::process;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 
-use network_manager::{AccessPoint, AccessPointCredentials, Connection, ConnectionState,
-                      Connectivity, Device, DeviceState, DeviceType, NetworkManager, Security,
-                      ServiceState, EthernetDevice};
-use errors::*;
-use exit::{exit, trap_exit_signals, ExitResult};
 use config::Config;
 use dnsmasq::{start_dnsmasq, stop_dnsmasq};
-use server::start_server;
+use errors::*;
+use exit::{exit, trap_exit_signals, ExitResult};
+use network_manager::{
+    AccessPoint, AccessPointCredentials, Connection, ConnectionState, Connectivity, Device,
+    DeviceState, DeviceType, EthernetDevice, NetworkManager, Security, ServiceState,
+};
+use server::{start_server, start_timer};
 use std::string::ToString;
 
 pub enum NetworkCommand {
@@ -21,6 +22,7 @@ pub enum NetworkCommand {
     OverallTimeout,
     Exit,
     Reset,
+    Activate,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -31,6 +33,7 @@ pub struct Network {
 
 pub enum NetworkCommandResponse {
     Networks(Vec<Network>),
+    Timer(u64),
 }
 
 struct NetworkCommandHandler {
@@ -66,7 +69,6 @@ impl NetworkCommandHandler {
         Self::spawn_server(config, exit_tx, server_rx, network_tx.clone());
 
         Self::spawn_activity_timeout(config, network_tx.clone());
-        Self::spawn_overall_timeout(config, network_tx.clone());
 
         let config = config.clone();
         let activated = false;
@@ -95,6 +97,15 @@ impl NetworkCommandHandler {
         let exit_tx_server = exit_tx.clone();
         let ui_directory = config.ui_directory.clone();
 
+        let overall_timeout = config.overall_timeout;
+
+        if overall_timeout != 0 {
+            let net_tx = network_tx.clone();
+            thread::spawn(move || {
+                start_timer(overall_timeout, net_tx);
+            });
+        }
+
         thread::spawn(move || {
             start_server(
                 gateway,
@@ -118,24 +129,6 @@ impl NetworkCommandHandler {
             thread::sleep(Duration::from_secs(activity_timeout));
 
             if let Err(err) = network_tx.send(NetworkCommand::Timeout) {
-                error!(
-                    "Sending NetworkCommand::Timeout failed: {}",
-                    err.description()
-                );
-            }
-        });
-    }
-
-    fn spawn_overall_timeout(config: &Config, network_tx: Sender<NetworkCommand>) {
-        let overall_timeout = config.overall_timeout;
-
-        if overall_timeout == 0 {
-            return;
-        }
-
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(overall_timeout));
-            if let Err(err) = network_tx.send(NetworkCommand::OverallTimeout) {
                 error!(
                     "Sending NetworkCommand::Timeout failed: {}",
                     err.description()
@@ -169,6 +162,12 @@ impl NetworkCommandHandler {
             let command = self.receive_network_command()?;
 
             match command {
+                NetworkCommand::Activate => {
+                    if !self.activated {
+                        info!("User connected to the captive portal");
+                        self.activated = true;
+                    }
+                },
                 NetworkCommand::OverallTimeout => {
                     info!("Overall timeout reached. Exiting...");
                     return Ok(());
@@ -183,7 +182,7 @@ impl NetworkCommandHandler {
                     info!("Exiting...");
                     return Ok(());
                 },
-                NetworkCommand::Reset  => {
+                NetworkCommand::Reset => {
                     self.set_dhcp();
                 },
             }
@@ -227,13 +226,10 @@ impl NetworkCommandHandler {
         match ethernet_device.set_dhcp() {
             Err(e) => {
                 error!("Setting DHCP failed: {}", e.description());
-            }
+            },
             Ok(_) => (),
         };
-
     }
-
-
 }
 
 fn init_access_point_credentials(
@@ -312,7 +308,6 @@ fn find_wifi_managed_device(devices: Vec<Device>) -> Result<Option<Device>> {
     Ok(None)
 }
 
-
 fn get_networks(access_points: &[AccessPoint]) -> Vec<Network> {
     access_points
         .iter()
@@ -340,7 +335,6 @@ fn get_network_security(access_point: &AccessPoint) -> &str {
         "none"
     }
 }
-
 
 fn create_portal(device: &Device, config: &Config) -> Result<Connection> {
     let portal_passphrase = config.passphrase.as_ref().map(|p| p as &str);
@@ -418,7 +412,8 @@ pub fn start_network_manager_service() -> Result<()> {
     };
 
     if state != ServiceState::Active {
-        let state = NetworkManager::start_service(15).chain_err(|| ErrorKind::StartNetworkManager)?;
+        let state =
+            NetworkManager::start_service(15).chain_err(|| ErrorKind::StartNetworkManager)?;
         if state != ServiceState::Active {
             bail!(ErrorKind::StartActiveNetworkManager);
         } else {
@@ -457,10 +452,8 @@ fn delete_existing_wired_connections(manager: &NetworkManager) {
     };
 
     for connection in &connections {
-        if is_wired_connection(connection){
-            info!(
-                "Deleting existing wired connection"
-            );
+        if is_wired_connection(connection) {
+            info!("Deleting existing wired connection");
 
             if let Err(e) = connection.delete() {
                 error!("Deleting existing wired connection failed: {}", e);

@@ -1,24 +1,31 @@
-use std::sync::mpsc::{Receiver, Sender};
+use std::error::Error as StdError;
 use std::fmt;
 use std::net::Ipv4Addr;
-use std::error::Error as StdError;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde_json;
-use path::PathBuf;
-use iron::prelude::*;
-use iron::{headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request,
-           Response, Url};
 use iron::modifiers::Redirect;
+use iron::prelude::*;
+use iron::{
+    headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request, Response, Url,
+};
 use iron_cors::CorsMiddleware;
-use router::Router;
-use staticfile::Static;
 use mount::Mount;
-use persistent::Write;
 use params::{FromValue, Params};
+use path::PathBuf;
+use persistent::Write;
+use router::Router;
+use serde_json;
+use staticfile::Static;
+use std::thread;
+use std::time::Duration;
 
 use errors::*;
-use network::{NetworkCommand, NetworkCommandResponse};
 use exit::{exit, ExitResult};
+use network::{NetworkCommand, NetworkCommandResponse};
+use std::sync::Mutex;
+
+static TIMER: AtomicU64 = AtomicU64::new(0);
 
 struct RequestSharedState {
     gateway: Ipv4Addr,
@@ -47,47 +54,54 @@ impl StdError for StringError {
 }
 
 macro_rules! get_request_ref {
-    ($req:ident, $ty:ty, $err:expr) => (
+    ($req:ident, $ty:ty, $err:expr) => {
         match $req.get_ref::<$ty>() {
             Ok(val) => val,
             Err(err) => {
                 error!($err);
                 return Err(IronError::new(err, status::InternalServerError));
-            }
+            },
         }
-    )
+    };
 }
 
 macro_rules! get_param {
-    ($params:ident, $param:expr, $ty:ty) => (
+    ($params:ident, $param:expr, $ty:ty) => {
         match $params.get($param) {
-            Some(value) => {
-                match <$ty as FromValue>::from_value(value) {
-                    Some(converted) => converted,
-                    None => {
-                        let err = format!("Unexpected type for '{}'", $param);
-                        error!("{}", err);
-                        return Err(IronError::new(StringError(err), status::InternalServerError));
-                    }
-                }
+            Some(value) => match <$ty as FromValue>::from_value(value) {
+                Some(converted) => converted,
+                None => {
+                    let err = format!("Unexpected type for '{}'", $param);
+                    error!("{}", err);
+                    return Err(IronError::new(
+                        StringError(err),
+                        status::InternalServerError,
+                    ));
+                },
             },
             None => {
                 let err = format!("'{}' not found in request params: {:?}", $param, $params);
                 error!("{}", err);
-                return Err(IronError::new(StringError(err), status::InternalServerError));
-            }
+                return Err(IronError::new(
+                    StringError(err),
+                    status::InternalServerError,
+                ));
+            },
         }
-    )
+    };
 }
 
 macro_rules! get_request_state {
-    ($req:ident) => (
+    ($req:ident) => {
         get_request_ref!(
             $req,
             Write<RequestSharedState>,
             "Getting reference to request shared state failed"
-        ).as_ref().lock().unwrap()
-    )
+        )
+        .as_ref()
+        .lock()
+        .unwrap()
+    };
 }
 
 fn exit_with_error<E>(state: &RequestSharedState, e: E, e_kind: ErrorKind) -> IronResult<Response>
@@ -143,6 +157,7 @@ pub fn start_server(
     let mut router = Router::new();
     router.get("/", Static::new(ui_directory), "index");
     router.post("/reset_dhcp", reset_dhcp, "reset_dhcp");
+    router.get("/get_timer", get_timer, "get_timer");
 
     let mut assets = Mount::new();
     assets.mount("/", router);
@@ -170,15 +185,37 @@ pub fn start_server(
     }
 }
 
+pub fn start_timer(secs: u64, network_tx: Sender<NetworkCommand>) {
+    TIMER.store(secs, Ordering::Relaxed);
+    while TIMER.load(Ordering::Relaxed) > 0 {
+        thread::sleep(Duration::from_secs(1));
+        TIMER.store(TIMER.load(Ordering::Relaxed)-1, Ordering::Relaxed);
+    }
+    if let Err(err) = network_tx.send(NetworkCommand::OverallTimeout) {
+        error!(
+            "Sending NetworkCommand::Timeout failed: {}",
+            err.description()
+        );
+    }
+}
+
+fn get_timer(req: &mut Request) -> IronResult<Response> {
+    let request_state = get_request_state!(req);
+
+    if let Err(e) = request_state.network_tx.send(NetworkCommand::Activate) {
+        return exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandActivate);
+    }
+
+    let time = TIMER.load(Ordering::Relaxed);
+    Ok(Response::with((status::Ok, time.to_string())))
+}
 
 fn reset_dhcp(req: &mut Request) -> IronResult<Response> {
-
     debug!("Requested DHCP reset");
 
     let request_state = get_request_state!(req);
 
-    let command = NetworkCommand::Reset {
-    };
+    let command = NetworkCommand::Reset {};
 
     if let Err(e) = request_state.network_tx.send(command) {
         exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandReset)

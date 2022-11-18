@@ -1,9 +1,8 @@
-import React from 'react';
-import logo from '../img/logo.svg';
-import { Navbar, Provider, Container } from 'rendition';
-import { NetworkInfoForm } from './NetworkInfoForm';
-import { Notifications } from './Notifications';
-import { createGlobalStyle } from 'styled-components';
+import React, { useState, useEffect, useRef } from "react";
+import logo from "../img/logo.svg";
+import { Navbar, Provider, Container, Flex, Button, Heading } from "rendition";
+import { Notifications } from "./Notifications";
+import { createGlobalStyle } from "styled-components";
 
 const GlobalStyle = createGlobalStyle`
 	body {
@@ -20,66 +19,78 @@ const GlobalStyle = createGlobalStyle`
 	}
 `;
 
-export interface NetworkInfo {
-	ssid?: string;
-	identity?: string;
-	passphrase?: string;
-}
-
-export interface Network {
-	ssid: string;
-	security: string;
-}
-
 const App = () => {
-	const [attemptedConnect, setAttemptedConnect] = React.useState(false);
-	const [isFetchingNetworks, setIsFetchingNetworks] = React.useState(true);
-	const [error, setError] = React.useState('');
-	const [availableNetworks, setAvailableNetworks] = React.useState<Network[]>(
-		[],
-	);
+  const [attemptedReset, setAttemptedReset] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [timer, setTimer] = React.useState<number>(-1);
 
-	const onReset = (data: NetworkInfo) => {
-		setAttemptedConnect(true);
-		setError('');
+  React.useEffect(() => {
+    if (timer == -1) {
+      fetch("/get_timer")
+        .then((data) => {
+          if (data.status !== 200) {
+            throw new Error(data.statusText);
+          }
+          return data.text();
+        })
+        .then((t) => {
+          setTimer(parseInt(t));
+          const interval = setInterval(() => {
+            setTimer((t) => {
+              if (t > 0) {
+                return t - 1;
+              } else {
+                clearInterval(interval);
+                return 0;
+              }
+            });
+          }, 1000);
+        })
+        .catch((e: Error) => {
+          setError(`Failed to fetch timer. ${e.message || e}`);
+        });
+    }
+  }, [timer]);
 
-		fetch('/reset_dhcp', {
-			method: 'POST',
-			body: JSON.stringify(data),
-			headers: {
-				'Content-Type': 'application/json',
-			},
-		})
-			.then((resp) => {
-				if (resp.status !== 200) {
-					throw new Error(resp.statusText);
-				}
-			})
-			.catch((e: Error) => {
-				setError(`Failed to reset DHCP. ${e.message || e}`);
-			});
-	};
+  const onReset = () => {
+    setAttemptedReset(true);
+    setError("");
 
-	return (
-		<Provider>
-			<GlobalStyle />
-			<Navbar
-				brand={<img src={logo} style={{ height: 30 }} alt="logo" />}
-				style={{ backgroundColor: '#29292F' }}
-			/>
+    fetch("/reset_dhcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+      .then((resp) => {
+        if (resp.status !== 200) {
+          throw new Error(resp.statusText);
+        }
+      })
+      .catch((e: Error) => {
+        setError(`Failed to reset DHCP. ${e.message || e}`);
+      });
+  };
 
-			<Container>
-				<Notifications
-					attemptedConnect={attemptedConnect}
-					hasAvailableNetworks={
-						isFetchingNetworks || availableNetworks.length > 0
-					}
-					error={error}
-				/>
-				<NetworkInfoForm onSubmit={onReset} />
-			</Container>
-		</Provider>
-	);
+  return (
+    <Provider>
+      <GlobalStyle />
+      <Navbar brand={<img src={logo} style={{ height: 30 }} alt="logo" />} style={{ backgroundColor: "#29292F" }} />
+
+      <Container>
+        <Notifications attemptedReset={attemptedReset} timer={timer} error={error} />
+        <Flex flexDirection="column" alignItems="center" justifyContent="center" m={4} mt={5}>
+          <Heading.h3 align="center" mb={4}>
+            Click the below button to reset this device's network settings to DHCP. Any static IP settings will be lost.
+          </Heading.h3>
+
+          <Button onClick={onReset} danger={true}>
+            Reset to DHCP
+          </Button>
+        </Flex>
+      </Container>
+    </Provider>
+  );
 };
 
 export default App;
