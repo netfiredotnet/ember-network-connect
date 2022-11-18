@@ -25,7 +25,7 @@ export const Notifications = ({
         <Alert m={2} warning>
           <Txt.span>This access point will shut down in {timer} seconds.&nbsp;</Txt.span>
           <Txt.span>
-            If you still need more time, you can power the device off an on again, after which point the countdown will
+            If you still need more time, you can power the device off and on again, after which point the countdown will
             restart.
           </Txt.span>
         </Alert>
