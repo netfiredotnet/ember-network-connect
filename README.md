@@ -179,6 +179,13 @@ This triggers the CI to:
 
 ---
 
+## TODO
+
+- [ ] Migrate Rust backend from `iron` to `axum` - The current codebase uses legacy dependencies (`iron`, `params`, `persistent`, `rustc-serialize`) that require Rust 1.70. Updating to `axum` would allow using modern Rust and improve maintainability.
+- [ ] Restore `Cargo.lock` in Docker build - Currently excluded from `Dockerfile.binary` due to lock file version 4 incompatibility with Rust 1.70. Once migrated to axum with modern Rust, re-add `Cargo.lock` to ensure reproducible builds.
+
+---
+
 ## License
 
 Ember Network Connect is free software, and may be redistributed under the terms specified in the [LICENSE](LICENSE) file (Apache 2.0).
