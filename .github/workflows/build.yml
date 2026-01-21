@@ -156,6 +156,7 @@ jobs:
           file: Dockerfile.runtime
           platforms: linux/amd64
           push: true
+          provenance: false
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-amd64
           build-contexts: |
             ui=staging/ui
@@ -168,6 +169,7 @@ jobs:
           file: Dockerfile.runtime
           platforms: linux/arm64
           push: true
+          provenance: false
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-arm64
           build-contexts: |
             ui=staging/ui

@@ -541,7 +541,7 @@ dependencies = [
 [[package]]
 name = "network-manager"
 version = "0.14.3"
-source = "git+https://github.com/netfiredotnet/network-manager.git?tag=v0.14.3#4372d225b72c1fd14210602ec12311ad1727759c"
+source = "git+https://github.com/netfiredotnet/ember-network-manager.git?tag=v0.14.3#4372d225b72c1fd14210602ec12311ad1727759c"
 dependencies = [
  "ascii",
  "bitflags 1.3.2",
