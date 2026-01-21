@@ -1,0 +1,30 @@
+{
+  "app": {
+    "logoAlt": "Ember Network Connect"
+  },
+  "loading": {
+    "title": "Loading",
+    "description": "Fetching the current status of the access point..."
+  },
+  "success": {
+    "title": "Applying changes...",
+    "description": "Please ask NetFire staff to check connectivity to the device. If you need to make any port changes or other network config changes, you may do so now."
+  },
+  "shutdown": {
+    "title": "Access point is shutting down",
+    "description": "The access point has timed out and is now shutting down. Power cycle the device to restart it."
+  },
+  "countdown": {
+    "message": "Access point will shut down in {{seconds}} seconds.",
+    "hint": "Power cycle the device to restart the countdown."
+  },
+  "reset": {
+    "heading": "Click the below button to reset this device's network settings to DHCP. Any static IP settings will be lost.",
+    "button": "Reset to DHCP",
+    "buttonLoading": "Resetting..."
+  },
+  "errors": {
+    "fetchTimer": "Failed to fetch timer",
+    "resetDhcp": "Failed to reset DHCP"
+  }
+}

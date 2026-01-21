@@ -39,6 +39,32 @@ When running `pnpm dev` without `VITE_BACKEND_URL`, a mock API is used:
 
 This allows frontend development on macOS/Windows without the Rust backend.
 
+### Testing Failure States
+
+Configure mock behavior by visiting these URLs:
+
+```bash
+# Make reset button fail (500 error)
+http://localhost:3000/__mock?failReset=true
+
+# Disable reset failure
+http://localhost:3000/__mock?failReset=false
+
+# Make timer fetch fail (page won't load properly)
+http://localhost:3000/__mock?failTimer=true
+
+# Set timer to 10 seconds (test countdown)
+http://localhost:3000/__mock?timer=10
+
+# Add 2 second delay to responses
+http://localhost:3000/__mock?delay=2000
+
+# Combine options
+http://localhost:3000/__mock?failReset=true&delay=1000
+```
+
+Settings persist until the dev server restarts. Visit `/__mock` to see current settings.
+
 ## Structure
 
 ```
@@ -47,7 +73,6 @@ src/
 ├── index.css             # Tailwind imports + theme
 ├── components/
 │   ├── App.tsx           # Main app component
-│   ├── Notifications.tsx # Alert notifications
 │   └── ui/               # shadcn/ui components
 │       └── button.tsx
 ├── lib/
