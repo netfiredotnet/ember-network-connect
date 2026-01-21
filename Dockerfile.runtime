@@ -24,7 +24,7 @@ COPY ember-network-connect ./
 COPY --from=ui . ./ui
 
 # Copy start script
-COPY --from=scripts scripts/start.sh ./
+COPY --from=scripts start.sh ./
 
 # Make files executable
 RUN chmod +x ./ember-network-connect ./start.sh
