@@ -4,9 +4,13 @@
 FROM rust:1.70-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     libdbus-1-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Use git CLI instead of libgit2 (fixes issues with old Cargo/libgit2)
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 WORKDIR /app
 
