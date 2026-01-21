@@ -196,3 +196,7 @@ Ember Network Connect is free software, and may be redistributed under the terms
 ## Acknowledgments
 
 This project is a fork of [balena-os/wifi-connect](https://github.com/balena-os/wifi-connect), originally developed by [balena.io](https://balena.io).
+
+### Dependencies
+
+This project uses [netfiredotnet/network-manager](https://github.com/netfiredotnet/network-manager), a fork of the balena network-manager crate that adds support for resetting Ethernet connections to DHCP addressing.

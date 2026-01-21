@@ -18,9 +18,9 @@ COPY Cargo.toml Cargo.lock ./
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Create dummy src to build dependencies
-# RUN rm -rf /usr/local/cargo/git/db/network-manager-* /usr/local/cargo/git/checkouts/network-manager-* \
-#     && mkdir src && echo "fn main() {}" > src/main.rs \
-RUN mkdir src && echo "fn main() {}" > src/main.rs \
+# RUN mkdir src && echo "fn main() {}" > src/main.rs \
+RUN rm -rf /usr/local/cargo/git/db/network-manager-* /usr/local/cargo/git/checkouts/network-manager-* \
+    && mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
     && rm -rf src
 
