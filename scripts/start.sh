@@ -2,32 +2,27 @@
 
 export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
 
-# Optional step - it takes couple of seconds (or longer) to establish a WiFi connection
-# sometimes. In this case, following checks will fail and wifi-connect
-# will be launched even if the device will be able to connect to a WiFi network.
-# If this is your case, you can wait for a while and then check for the connection.
-# sleep 15
+# Fetch the name of the current WiFi interface, as they can be variable
+wifi_interface_name=$(iw dev | awk '$1=="Interface"{print $2}')
 
-# Choose a condition for running WiFi Connect according to your use case:
+# Update the list of available WiFi networks before launch
+iw dev "$wifi_interface_name" scan &> /dev/null || printf 'Error updating WiFi network list with IW\n'
 
-# 1. Is there a default gateway?
-# ip route | grep default
+# Configuration via environment variables with defaults
+SSID="${EMBER_WIFI_SSID:-NetFire Ember}"
+PASSWORD="${EMBER_WIFI_PASSWORD:-}"
+ACTIVITY_TIMEOUT="${EMBER_ACTIVITY_TIMEOUT:-120}"
+NETWORK_TIMEOUT="${EMBER_NETWORK_TIMEOUT:-300}"
 
-# 2. Is there Internet connectivity?
-# nmcli -t g | grep full
-
-# 3. Is there Internet connectivity via a google ping?
-# wget --spider http://google.com 2>&1
-
-# 4. Is there an active WiFi connection?
-iwgetid -r
-
-if [ $? -eq 0 ]; then
-    printf 'Skipping WiFi Connect\n'
-else
-    printf 'Starting WiFi Connect\n'
-    ./wifi-connect
+# Build command arguments
+CMD_ARGS="-s \"$SSID\" -a $ACTIVITY_TIMEOUT -n $NETWORK_TIMEOUT"
+if [ -n "$PASSWORD" ]; then
+    CMD_ARGS="$CMD_ARGS -p \"$PASSWORD\""
 fi
 
-# Start your application here.
-sleep infinity
+# Launch Ember Network Connect
+printf 'Starting Ember Network Connect with %s second activity timeout and %s second overall timeout\n' "$ACTIVITY_TIMEOUT" "$NETWORK_TIMEOUT"
+
+# Sleep infinity when we exit successfully; this has the effect of deactivating 
+# the AP and keeping it that way until an update or device reboot.
+eval ./ember-network-connect $CMD_ARGS && sleep infinity

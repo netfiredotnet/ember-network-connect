@@ -1,0 +1,272 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Job 1: Build UI
+  build-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Build UI
+        working-directory: ui
+        run: pnpm run build
+
+      - name: Upload UI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-build
+          path: ui/build/
+          retention-days: 1
+
+  # Job 2: Build binaries for each architecture
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+          - platform: linux/arm/v7
+            arch: armv7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.binary
+          platforms: ${{ matrix.platform }}
+          outputs: type=local,dest=./out
+          cache-from: type=gha,scope=binary-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=binary-${{ matrix.arch }}
+
+      - name: Package binary
+        run: |
+          cd out
+          tar -czvf ember-network-connect-linux-${{ matrix.arch }}.tar.gz ember-network-connect
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: out/ember-network-connect-linux-${{ matrix.arch }}.tar.gz
+          retention-days: 1
+
+  # Job 3: Build and push Docker image
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [build-ui, build-binaries]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download UI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-build
+          path: staging/ui
+
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-amd64
+          path: staging/binaries
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-arm64
+          path: staging/binaries
+
+      - name: Download armv7 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-armv7
+          path: staging/binaries
+
+      - name: Extract binaries
+        run: |
+          mkdir -p staging/amd64 staging/arm64 staging/armv7
+          tar -xzf staging/binaries/ember-network-connect-linux-amd64.tar.gz -C staging/amd64
+          tar -xzf staging/binaries/ember-network-connect-linux-arm64.tar.gz -C staging/arm64
+          tar -xzf staging/binaries/ember-network-connect-linux-armv7.tar.gz -C staging/armv7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      # Build separate images for each arch, then combine
+      - name: Build and push amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: staging/amd64
+          file: Dockerfile.runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-amd64
+          build-contexts: |
+            ui=staging/ui
+            scripts=scripts
+
+      - name: Build and push arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: staging/arm64
+          file: Dockerfile.runtime
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-arm64
+          build-contexts: |
+            ui=staging/ui
+            scripts=scripts
+
+      - name: Build and push armv7
+        uses: docker/build-push-action@v6
+        with:
+          context: staging/armv7
+          file: Dockerfile.runtime
+          platforms: linux/arm/v7
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-armv7
+          build-contexts: |
+            ui=staging/ui
+            scripts=scripts
+
+      - name: Create and push manifest
+        run: |
+          # Get all tags from metadata
+          TAGS="${{ steps.meta.outputs.tags }}"
+          
+          for TAG in $TAGS; do
+            docker buildx imagetools create -t "$TAG" \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-amd64 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-arm64 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-armv7
+          done
+
+      - name: Clean up intermediate tags
+        continue-on-error: true
+        run: |
+          # Note: GHCR doesn't support deleting tags via API easily
+          # The build-* tags will remain but won't affect usage
+          echo "Multi-arch manifest created successfully"
+
+  # Job 4: Create GitHub Release (only on tags)
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-ui, build-binaries]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download UI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-build
+          path: ui-build
+
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-amd64
+          path: binaries
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-arm64
+          path: binaries
+
+      - name: Download armv7 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-armv7
+          path: binaries
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Rename binaries with version
+        run: |
+          cd binaries
+          mv ember-network-connect-linux-amd64.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+          mv ember-network-connect-linux-arm64.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+          mv ember-network-connect-linux-armv7.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-armv7.tar.gz
+
+      - name: Package UI
+        run: |
+          tar -czvf ember-network-connect-ui-${{ steps.version.outputs.VERSION }}.tar.gz -C ui-build .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-armv7.tar.gz
+            ember-network-connect-ui-${{ steps.version.outputs.VERSION }}.tar.gz
+          generate_release_notes: true

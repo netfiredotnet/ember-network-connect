@@ -1,0 +1,27 @@
+# Dockerfile for building standalone Rust binary
+# Used by CI to extract binaries for each architecture
+
+FROM rust:1.76-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libdbus-1-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files first for better caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create dummy src to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
+    && cargo fetch \
+    && rm -rf src
+
+# Copy actual source and build
+COPY src ./src
+RUN cargo build --release
+
+# Export stage - copies just the binary out
+FROM scratch AS export
+COPY --from=builder /app/target/release/ember-network-connect /
