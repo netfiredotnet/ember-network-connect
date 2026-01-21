@@ -1,8 +1,14 @@
 # Ember Network Connect UI
 
-## Development
+## Stack
 
-Built with React 18, TypeScript 5, and Vite.
+- React 19
+- TypeScript 5.9
+- Vite 7
+- Tailwind CSS 4
+- shadcn/ui components
+
+## Development
 
 ```bash
 # Install dependencies
@@ -19,6 +25,9 @@ pnpm build
 
 # Preview production build
 pnpm preview
+
+# Lint
+pnpm lint
 ```
 
 ### Mock API
@@ -34,10 +43,15 @@ This allows frontend development on macOS/Windows without the Rust backend.
 
 ```
 src/
-├── main.tsx           # Entry point
+├── main.tsx              # Entry point
+├── index.css             # Tailwind imports + theme
 ├── components/
-│   ├── App.tsx        # Main app component
-│   └── Notifications.tsx
+│   ├── App.tsx           # Main app component
+│   ├── Notifications.tsx # Alert notifications
+│   └── ui/               # shadcn/ui components
+│       └── button.tsx
+├── lib/
+│   └── utils.ts          # cn() utility
 └── img/
     └── logo.svg
 ```

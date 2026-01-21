@@ -122,7 +122,8 @@ just --list
 | `just build` | Build everything (UI + Rust) to `out/` |
 | `just build-ui` | Build UI only |
 | `just build-rust` | Build Rust binary only |
-| `just dev-ui` | Run UI dev server with hot reload |
+| `just dev-ui` | Run UI dev server with mock API |
+| `just dev-ui-backend <url>` | Run UI dev server connected to real backend |
 | `just docker-build` | Build Docker image for current architecture |
 | `just lint` | Run all linters |
 | `just clean` | Remove all build artifacts |
