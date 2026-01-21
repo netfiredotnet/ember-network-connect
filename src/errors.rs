@@ -26,15 +26,6 @@ pub enum AppError {
     #[error("Creating captive portal failed: {0}")]
     CreateCaptivePortal(String),
 
-    #[error("Stopping access point failed: {0}")]
-    StopAccessPoint(String),
-
-    #[error("Deleting connection profile failed: {0}")]
-    DeleteConnection(String),
-
-    #[error("Cannot start HTTP server on '{address}': {reason}")]
-    StartHttpServer { address: String, reason: String },
-
     #[error("NetworkManager service failed to reach active state")]
     StartActiveNetworkManager,
 
@@ -71,9 +62,6 @@ pub fn exit_code(e: &AppError) -> i32 {
         AppError::NotAWiFiDevice(_) => 11,
         AppError::NoWiFiDevice => 12,
         AppError::CreateCaptivePortal(_) => 14,
-        AppError::StopAccessPoint(_) => 15,
-        AppError::DeleteConnection(_) => 16,
-        AppError::StartHttpServer { .. } => 17,
         AppError::StartActiveNetworkManager => 18,
         AppError::StartNetworkManager(_) => 19,
         AppError::BlockExitSignals(_) => 21,
