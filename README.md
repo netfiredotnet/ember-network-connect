@@ -9,6 +9,20 @@ Ember Network Connect is a fork of [balena-os/wifi-connect](https://github.com/b
 
 ---
 
+## What is Ember?
+
+Ember is a versatile edge device offered by [NetFire](https://netfire.com) that enables a wide range of capabilities for its clients, including:
+
+- **Digital signage** - Display dynamic content on screens
+- **Failover internet connection control** - Automatic network failover and management
+- **Network and server monitoring** - Real-time visibility into infrastructure health
+- **Scan-to-cloud** - Seamless document digitization workflows
+- And more...
+
+Head to [netfire.com](https://netfire.com) to get started.
+
+---
+
 ## How It Works
 
 1. **Device starts captive portal** - The application creates a temporary network configuration and serves a web UI
