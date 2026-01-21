@@ -1,7 +1,7 @@
 # Dockerfile for building standalone Rust binary
 # Used by CI to extract binaries for each architecture
 
-FROM rust:1.76-bookworm AS builder
+FROM rust:1.70-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libdbus-1-dev \
