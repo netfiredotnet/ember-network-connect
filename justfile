@@ -27,9 +27,14 @@ docker-build: build
         -t ember-network-connect:local \
         out
 
-# Run the UI dev server with hot reload
+# Run the UI dev server with hot reload (uses mock API)
 dev-ui:
-    cd ui && pnpm start
+    cd ui && pnpm dev
+
+# Run the UI dev server connected to a real backend
+# Usage: just dev-ui-backend http://192.168.1.100:80
+dev-ui-backend backend_url:
+    cd ui && VITE_BACKEND_URL={{backend_url}} pnpm dev
 
 # Run the Rust binary (requires build first)
 run: build

@@ -1,31 +1,15 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import logo from "../img/logo.svg";
-import { Navbar, Provider, Container, Flex, Button, Heading } from "rendition";
+import { Button } from "@/components/ui/button";
 import { Notifications } from "./Notifications";
-import { createGlobalStyle } from "styled-components";
-
-const GlobalStyle = createGlobalStyle`
-	body {
-		margin: 0;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-			'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-			sans-serif;
-		-webkit-font-smoothing: antialiased;
-		-moz-osx-font-smoothing: grayscale;
-	}
-
-	code {
-		font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
-	}
-`;
 
 const App = () => {
-  const [attemptedReset, setAttemptedReset] = React.useState(false);
-  const [error, setError] = React.useState("");
-  const [timer, setTimer] = React.useState<number>(-1);
+  const [attemptedReset, setAttemptedReset] = useState(false);
+  const [error, setError] = useState("");
+  const [timer, setTimer] = useState<number>(-1);
 
-  React.useEffect(() => {
-    if (timer == -1) {
+  useEffect(() => {
+    if (timer === -1) {
       fetch("/get_timer")
         .then((data) => {
           if (data.status !== 200) {
@@ -36,9 +20,9 @@ const App = () => {
         .then((t) => {
           setTimer(parseInt(t));
           const interval = setInterval(() => {
-            setTimer((t) => {
-              if (t > 0) {
-                return t - 1;
+            setTimer((prev) => {
+              if (prev > 0) {
+                return prev - 1;
               } else {
                 clearInterval(interval);
                 return 0;
@@ -52,7 +36,7 @@ const App = () => {
     }
   }, [timer]);
 
-  const onReset = () => {
+  const handleReset = () => {
     setAttemptedReset(true);
     setError("");
 
@@ -73,23 +57,32 @@ const App = () => {
   };
 
   return (
-    <Provider>
-      <GlobalStyle />
-      <Navbar brand={<img src={logo} style={{ height: 30 }} alt="logo" />} style={{ backgroundColor: "#29292F" }} />
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <nav className="bg-[#29292F] px-4 py-3">
+        <img src={logo} className="h-8" alt="Ember Network Connect" />
+      </nav>
 
-      <Container>
-        <Notifications attemptedReset={attemptedReset} timer={timer} error={error} />
-        <Flex flexDirection="column" alignItems="center" justifyContent="center" m={4} mt={5}>
-          <Heading.h3 align="center" mb={4}>
-            Click the below button to reset this device's network settings to DHCP. Any static IP settings will be lost.
-          </Heading.h3>
+      {/* Main content */}
+      <main className="container mx-auto px-4 py-8">
+        <Notifications
+          attemptedReset={attemptedReset}
+          timer={timer}
+          error={error}
+        />
 
-          <Button onClick={onReset} danger={true}>
+        <div className="flex flex-col items-center justify-center mt-8">
+          <h3 className="text-xl font-medium text-center mb-6 max-w-lg">
+            Click the below button to reset this device's network settings to
+            DHCP. Any static IP settings will be lost.
+          </h3>
+
+          <Button variant="destructive" size="lg" onClick={handleReset}>
             Reset to DHCP
           </Button>
-        </Flex>
-      </Container>
-    </Provider>
+        </div>
+      </main>
+    </div>
   );
 };
 
