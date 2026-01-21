@@ -15,13 +15,13 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 
 # Use git CLI to avoid libgit2 inode overflow on 32-bit builds
-# Disable shallow clones so cargo can find pinned commits
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
-# ENV GIT_DEPTH=0
+
+# Disable shallow clones so cargo can find pinned commits
+RUN git config --global fetch.depth 0 && \
+    git config --global clone.depth 0
 
 # Create dummy src to build dependencies
-# RUN rm -rf /usr/local/cargo/git/db/network-manager-* /usr/local/cargo/git/checkouts/network-manager-* \
-#     && mkdir src && echo "fn main() {}" > src/main.rs \
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
     && rm -rf src
