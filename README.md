@@ -77,30 +77,30 @@ Download pre-built binaries from the [Releases](https://github.com/netfiredotnet
 
 When running the Docker image, configure via these environment variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EMBER_WIFI_SSID` | `NetFire Ember` | SSID of the captive portal WiFi network |
-| `EMBER_WIFI_PASSWORD` | (none) | WPA2 password for the portal (optional) |
-| `EMBER_ETHERNET_INTERFACE` | `eth0` | Ethernet interface to reset to DHCP |
-| `EMBER_ACTIVITY_TIMEOUT` | `120` | Exit after N seconds of inactivity |
-| `EMBER_NETWORK_TIMEOUT` | `300` | Overall timeout in seconds |
+| Variable                   | Default         | Description                             |
+| -------------------------- | --------------- | --------------------------------------- |
+| `EMBER_WIFI_SSID`          | `NetFire Ember` | SSID of the captive portal WiFi network |
+| `EMBER_WIFI_PASSWORD`      | (none)          | WPA2 password for the portal (optional) |
+| `EMBER_ETHERNET_INTERFACE` | `eth0`          | Ethernet interface to reset to DHCP     |
+| `EMBER_ACTIVITY_TIMEOUT`   | `120`           | Exit after N seconds of inactivity      |
+| `EMBER_NETWORK_TIMEOUT`    | `300`           | Overall timeout in seconds              |
 
 ### Command Line Arguments
 
 For direct binary usage, these arguments are available:
 
-| Argument | Environment Variable | Default | Description |
-|----------|---------------------|---------|-------------|
-| `-i, --portal-interface` | `PORTAL_INTERFACE` | auto | WiFi interface for the captive portal AP |
-| `-e, --ethernet-interface` | `ETHERNET_INTERFACE` | `eth0` | Ethernet interface to reset to DHCP |
-| `-s, --portal-ssid` | `PORTAL_SSID` | `WiFi Connect` | SSID of the captive portal |
-| `-p, --portal-passphrase` | `PORTAL_PASSPHRASE` | none | WPA2 passphrase for the portal |
-| `-g, --portal-gateway` | `PORTAL_GATEWAY` | `192.168.42.1` | Gateway IP address |
-| `-d, --portal-dhcp-range` | `PORTAL_DHCP_RANGE` | `192.168.42.2,192.168.42.254` | DHCP range |
-| `-o, --portal-listening-port` | `PORTAL_LISTENING_PORT` | `80` | Web server port |
-| `-a, --activity-timeout` | `ACTIVITY_TIMEOUT` | `0` (disabled) | Exit after N seconds of inactivity |
-| `-n, --overall-timeout` | `OVERALL_TIMEOUT` | `0` (disabled) | Exit after N seconds total |
-| `-u, --ui-directory` | `UI_DIRECTORY` | `ui` | Path to web UI files |
+| Argument                      | Environment Variable    | Default                       | Description                              |
+| ----------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
+| `-i, --portal-interface`      | `PORTAL_INTERFACE`      | auto                          | WiFi interface for the captive portal AP |
+| `-e, --ethernet-interface`    | `ETHERNET_INTERFACE`    | `eth0`                        | Ethernet interface to reset to DHCP      |
+| `-s, --portal-ssid`           | `PORTAL_SSID`           | `WiFi Connect`                | SSID of the captive portal               |
+| `-p, --portal-passphrase`     | `PORTAL_PASSPHRASE`     | none                          | WPA2 passphrase for the portal           |
+| `-g, --portal-gateway`        | `PORTAL_GATEWAY`        | `192.168.42.1`                | Gateway IP address                       |
+| `-d, --portal-dhcp-range`     | `PORTAL_DHCP_RANGE`     | `192.168.42.2,192.168.42.254` | DHCP range                               |
+| `-o, --portal-listening-port` | `PORTAL_LISTENING_PORT` | `80`                          | Web server port                          |
+| `-a, --activity-timeout`      | `ACTIVITY_TIMEOUT`      | `0` (disabled)                | Exit after N seconds of inactivity       |
+| `-n, --overall-timeout`       | `OVERALL_TIMEOUT`       | `0` (disabled)                | Exit after N seconds total               |
+| `-u, --ui-directory`          | `UI_DIRECTORY`          | `ui`                          | Path to web UI files                     |
 
 ---
 
@@ -131,18 +131,18 @@ just --list
 
 ### Development Commands
 
-| Command | Description |
-|---------|-------------|
-| `just build` | Build everything (UI + Rust) to `out/` |
-| `just build-ui` | Build UI only |
-| `just build-rust` | Build Rust binary only |
-| `just dev-ui` | Run UI dev server with mock API |
-| `just dev-ui-backend <url>` | Run UI dev server connected to real backend |
-| `just docker-build` | Build Docker image for current architecture |
-| `just docker-build-binary` | Test CI binary build locally (arm64 default) |
-| `just lint` | Run all linters |
-| `just clean` | Remove all build artifacts |
-| `just release <version>` | Create and push a git tag to trigger release |
+| Command                     | Description                                  |
+| --------------------------- | -------------------------------------------- |
+| `just build`                | Build everything (UI + Rust) to `out/`       |
+| `just build-ui`             | Build UI only                                |
+| `just build-rust`           | Build Rust binary only                       |
+| `just dev-ui`               | Run UI dev server with mock API              |
+| `just dev-ui-backend <url>` | Run UI dev server connected to real backend  |
+| `just docker-build`         | Build Docker image for current architecture  |
+| `just docker-build-binary`  | Test CI binary build locally (arm64 default) |
+| `just lint`                 | Run all linters                              |
+| `just clean`                | Remove all build artifacts                   |
+| `just release <version>`    | Create and push a git tag to trigger release |
 
 ### Project Structure
 
@@ -178,6 +178,7 @@ git push origin v4.12.0
 ```
 
 This triggers the CI to:
+
 1. Build binaries for amd64 and arm64
 2. Build and push multi-arch Docker image to GHCR (tagged `latest`, `4.12.0`, `4.12`)
 3. Create GitHub Release with downloadable tarballs
@@ -207,4 +208,4 @@ This project is a fork of [balena-os/wifi-connect](https://github.com/balena-os/
 
 ### Dependencies
 
-This project uses [netfiredotnet/network-manager](https://github.com/netfiredotnet/network-manager), a fork of the balena network-manager crate that adds support for resetting Ethernet connections to DHCP addressing.
+This project uses [netfiredotnet/ember-network-manager](https://github.com/netfiredotnet/ember-network-manager), a fork of the balena network-manager crate that adds support for resetting Ethernet connections to DHCP addressing.
