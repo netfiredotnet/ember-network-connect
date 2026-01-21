@@ -54,11 +54,10 @@ version: "2.1"
 services:
   network-connect:
     image: ghcr.io/netfiredotnet/ember-network-connect:latest
-    network_mode: "host"
+    network_mode: host
+    privileged: true
     labels:
       io.balena.features.dbus: "1"
-    cap_add:
-      - NET_ADMIN
     environment:
       DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/host/run/dbus/system_bus_socket"
 ```
