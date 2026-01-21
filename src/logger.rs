@@ -1,30 +1,15 @@
-use std::env;
-use log::{LogLevel, LogLevelFilter, LogRecord};
-use env_logger::LogBuilder;
+use tracing_subscriber::{fmt, EnvFilter};
 
+/// Initialize the tracing subscriber for logging
 pub fn init() {
-    let mut builder = LogBuilder::new();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        // Default: show info for our crate, warn for others
+        EnvFilter::new("ember_network_connect=info,tower_http=warn,warn")
+    });
 
-    if env::var("RUST_LOG").is_ok() {
-        builder.parse(&env::var("RUST_LOG").unwrap());
-    } else {
-        let format = |record: &LogRecord| {
-            if record.level() == LogLevel::Info {
-                format!("{}", record.args())
-            } else {
-                format!(
-                    "[{}:{}] {}",
-                    record.location().module_path(),
-                    record.level(),
-                    record.args()
-                )
-            }
-        };
-
-        builder.format(format).filter(None, LogLevelFilter::Info);
-
-        builder.parse("wifi-connect=info,iron::iron=off");
-    }
-
-    builder.init().unwrap();
+    fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .init();
 }

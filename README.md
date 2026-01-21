@@ -83,6 +83,7 @@ When running the Docker image, configure via these environment variables:
 |----------|---------|-------------|
 | `EMBER_WIFI_SSID` | `NetFire Ember` | SSID of the captive portal WiFi network |
 | `EMBER_WIFI_PASSWORD` | (none) | WPA2 password for the portal (optional) |
+| `EMBER_ETHERNET_INTERFACE` | `eth0` | Ethernet interface to reset to DHCP |
 | `EMBER_ACTIVITY_TIMEOUT` | `120` | Exit after N seconds of inactivity |
 | `EMBER_NETWORK_TIMEOUT` | `300` | Overall timeout in seconds |
 
@@ -92,7 +93,8 @@ For direct binary usage, these arguments are available:
 
 | Argument | Environment Variable | Default | Description |
 |----------|---------------------|---------|-------------|
-| `-i, --portal-interface` | `PORTAL_INTERFACE` | auto | Network interface to use |
+| `-i, --portal-interface` | `PORTAL_INTERFACE` | auto | WiFi interface for the captive portal AP |
+| `-e, --ethernet-interface` | `ETHERNET_INTERFACE` | `eth0` | Ethernet interface to reset to DHCP |
 | `-s, --portal-ssid` | `PORTAL_SSID` | `WiFi Connect` | SSID of the captive portal |
 | `-p, --portal-passphrase` | `PORTAL_PASSPHRASE` | none | WPA2 passphrase for the portal |
 | `-g, --portal-gateway` | `PORTAL_GATEWAY` | `192.168.42.1` | Gateway IP address |
@@ -108,7 +110,7 @@ For direct binary usage, these arguments are available:
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (1.76+)
+- [Rust](https://rustup.rs/) (1.80+)
 - [Node.js](https://nodejs.org/) (20+)
 - [pnpm](https://pnpm.io/) (9+)
 - [just](https://github.com/casey/just) command runner
@@ -181,8 +183,8 @@ This triggers the CI to:
 
 ## TODO
 
-- [ ] Migrate Rust backend from `iron` to `axum` - The current codebase uses legacy dependencies (`iron`, `params`, `persistent`, `rustc-serialize`) that require Rust 1.70. Updating to `axum` would allow using modern Rust and improve maintainability.
-- [ ] Restore `Cargo.lock` in Docker build - Currently excluded from `Dockerfile.binary` due to lock file version 4 incompatibility with Rust 1.70. Once migrated to axum with modern Rust, re-add `Cargo.lock` to ensure reproducible builds.
+- [x] ~~Migrate Rust backend from `iron` to `axum`~~ - Completed! Now using modern Rust with axum, tokio, clap 4, tracing, and thiserror.
+- [x] ~~Restore `Cargo.lock` in Docker build~~ - Completed! Now using Rust 1.83 with modern dependencies.
 
 ---
 

@@ -1,13 +1,14 @@
 use std::process::{Child, Command};
 
-use nix::sys::signal::{kill, SIGTERM};
+use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 
 use network_manager::Device;
 
-use errors::*;
-use config::Config;
+use crate::config::Config;
+use crate::errors::{AppError, Result};
 
+/// Start dnsmasq for DHCP and DNS on the portal interface
 pub fn start_dnsmasq(config: &Config, device: &Device) -> Result<Child> {
     let args = [
         &format!("--address=/#/{}", config.gateway),
@@ -24,13 +25,12 @@ pub fn start_dnsmasq(config: &Config, device: &Device) -> Result<Child> {
     Command::new("dnsmasq")
         .args(&args)
         .spawn()
-        .chain_err(|| ErrorKind::Dnsmasq)
+        .map_err(|e| AppError::Dnsmasq(e.to_string()))
 }
 
+/// Stop the dnsmasq process
 pub fn stop_dnsmasq(dnsmasq: &mut Child) -> Result<()> {
-    kill(Pid::from_raw(dnsmasq.id() as _), SIGTERM)?;
-
+    kill(Pid::from_raw(dnsmasq.id() as i32), Signal::SIGTERM)?;
     dnsmasq.wait()?;
-
     Ok(())
 }

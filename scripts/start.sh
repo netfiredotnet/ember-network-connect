@@ -13,15 +13,20 @@ SSID="${EMBER_WIFI_SSID:-NetFire Ember}"
 PASSWORD="${EMBER_WIFI_PASSWORD:-}"
 ACTIVITY_TIMEOUT="${EMBER_ACTIVITY_TIMEOUT:-120}"
 NETWORK_TIMEOUT="${EMBER_NETWORK_TIMEOUT:-300}"
+ETH_INTERFACE="${EMBER_ETHERNET_INTERFACE:-eth0}"
 
 # Build command arguments
-CMD_ARGS="-s \"$SSID\" -a $ACTIVITY_TIMEOUT -n $NETWORK_TIMEOUT"
+CMD_ARGS="-s \"$SSID\" -a $ACTIVITY_TIMEOUT -n $NETWORK_TIMEOUT -e $ETH_INTERFACE"
 if [ -n "$PASSWORD" ]; then
     CMD_ARGS="$CMD_ARGS -p \"$PASSWORD\""
 fi
 
 # Launch Ember Network Connect
-printf 'Starting Ember Network Connect with %s second activity timeout and %s second overall timeout\n' "$ACTIVITY_TIMEOUT" "$NETWORK_TIMEOUT"
+printf 'Starting Ember Network Connect\n'
+printf '  SSID: %s\n' "$SSID"
+printf '  Ethernet interface: %s\n' "$ETH_INTERFACE"
+printf '  Activity timeout: %s seconds\n' "$ACTIVITY_TIMEOUT"
+printf '  Overall timeout: %s seconds\n' "$NETWORK_TIMEOUT"
 
 # Sleep infinity when we exit successfully; this has the effect of deactivating 
 # the AP and keeping it that way until an update or device reboot.

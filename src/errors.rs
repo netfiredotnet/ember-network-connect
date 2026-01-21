@@ -1,144 +1,86 @@
-use network_manager;
+use thiserror::Error;
 
-use network;
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 
-error_chain! {
-    foreign_links {
-        Io(::std::io::Error);
-        Recv(::std::sync::mpsc::RecvError);
-        SendNetworkCommand(::std::sync::mpsc::SendError<network::NetworkCommand>);
-        Nix(::nix::Error);
-    }
+    #[error("Nix error: {0}")]
+    Nix(#[from] nix::Error),
 
-    links {
-        NetworkManager(network_manager::errors::Error, network_manager::errors::ErrorKind);
-    }
+    #[error("NetworkManager error: {0}")]
+    NetworkManager(#[from] network_manager::errors::Error),
 
-    errors {
-        RecvAccessPointSSIDs {
-            description("Receiving access point SSIDs failed")
-        }
+    #[error("Cannot find network device '{0}'")]
+    DeviceNotFound(String),
 
-        RecvTimer {
-            description("Receiving timer value failed")
-        }
+    #[error("Device '{0}' is not a WiFi device")]
+    NotAWiFiDevice(String),
 
-        SendAccessPointSSIDs {
-            description("Sending access point SSIDs failed")
-        }
+    #[error("Device '{0}' is not an Ethernet device")]
+    NotAnEthernetDevice(String),
 
-        SerializeAccessPointSSIDs {
-            description("Serializing access point SSIDs failed")
-        }
+    #[error("Cannot find a managed WiFi device")]
+    NoWiFiDevice,
 
-        RecvNetworkCommand {
-            description("Receiving network command failed")
-        }
+    #[error("Creating captive portal failed: {0}")]
+    CreateCaptivePortal(String),
 
-        SendNetworkCommandActivate {
-            description("Sending NetworkCommand::Activate failed")
-        }
+    #[error("Stopping access point failed: {0}")]
+    StopAccessPoint(String),
 
-        SendNetworkCommandReset {
-            description("Sending NetworkCommand::Reset failed")
-        }
+    #[error("Deleting connection profile failed: {0}")]
+    DeleteConnection(String),
 
-        SendNetworkCommandGetTimer {
-            description("Sending NetworkCommand::GetTimer failed")
-        }
+    #[error("Cannot start HTTP server on '{address}': {reason}")]
+    StartHttpServer { address: String, reason: String },
 
-        DeviceByInterface(interface: String) {
-            description("Cannot find network device with interface name")
-            display("Cannot find network device with interface name '{}'", interface)
-        }
+    #[error("NetworkManager service failed to reach active state")]
+    StartActiveNetworkManager,
 
-        NotAWiFiDevice(interface: String) {
-            description("Not a WiFi device")
-            display("Not a WiFi device: {}", interface)
-        }
+    #[error("Starting NetworkManager service failed: {0}")]
+    StartNetworkManager(String),
 
-        UnmanagedDevice(interface: String) {
-            description("Unmanaged device")
-            display("Unmanaged device: {}", interface)
-        }
+    #[error("Spawning dnsmasq failed: {0}")]
+    Dnsmasq(String),
 
-        NoWiFiDevice {
-            description("Cannot find a WiFi device")
-        }
+    #[error("Blocking exit signals failed: {0}")]
+    BlockExitSignals(String),
 
-        NoAccessPoints {
-            description("Getting access points failed")
-        }
+    #[error("Trapping exit signals failed: {0}")]
+    TrapExitSignals(String),
 
-        CreateCaptivePortal {
-            description("Creating the captive portal failed")
-        }
+    #[error("Root privileges required to run {0}")]
+    RootPrivilegesRequired(String),
 
-        StopAccessPoint {
-            description("Stopping the access point failed")
-        }
+    #[error("Network command channel closed")]
+    ChannelClosed,
 
-        DeleteAccessPoint {
-            description("Deleting access point connection profile failed")
-        }
-
-        StartHTTPServer(address: String, reason: String) {
-            description("Cannot start HTTP server")
-            display("Cannot start HTTP server on '{}': {}", address, reason)
-        }
-
-        StartActiveNetworkManager {
-            description("Starting the NetworkManager service with active state failed")
-        }
-
-        StartNetworkManager {
-            description("Starting the NetworkManager service failed")
-        }
-
-        Dnsmasq {
-            description("Spawning dnsmasq failed")
-        }
-
-        BlockExitSignals {
-            description("Blocking exit signals failed")
-        }
-
-        TrapExitSignals {
-            description("Trapping exit signals failed")
-        }
-
-        RootPrivilegesRequired(app: String) {
-            description("Root privileges required")
-            display("You need root privileges to run {}", app)
-        }
-    }
+    #[error("Setting DHCP failed: {0}")]
+    SetDhcp(String),
 }
 
-pub fn exit_code(e: &Error) -> i32 {
-    match *e.kind() {
-        ErrorKind::Dnsmasq => 3,
-        ErrorKind::RecvAccessPointSSIDs => 4,
-        ErrorKind::SendAccessPointSSIDs => 5,
-        ErrorKind::SerializeAccessPointSSIDs => 6,
-        ErrorKind::RecvNetworkCommand => 7,
-        ErrorKind::SendNetworkCommandActivate => 8,
-        ErrorKind::SendNetworkCommandReset => 9,
-        ErrorKind::DeviceByInterface(_) => 10,
-        ErrorKind::NotAWiFiDevice(_) => 11,
-        ErrorKind::NoWiFiDevice => 12,
-        ErrorKind::NoAccessPoints => 13,
-        ErrorKind::CreateCaptivePortal => 14,
-        ErrorKind::StopAccessPoint => 15,
-        ErrorKind::DeleteAccessPoint => 16,
-        ErrorKind::StartHTTPServer(_, _) => 17,
-        ErrorKind::StartActiveNetworkManager => 18,
-        ErrorKind::StartNetworkManager => 19,
-        ErrorKind::BlockExitSignals => 21,
-        ErrorKind::TrapExitSignals => 22,
-        ErrorKind::RootPrivilegesRequired(_) => 23,
-        ErrorKind::UnmanagedDevice(_) => 24,
-        ErrorKind::SendNetworkCommandGetTimer => 25,
-        ErrorKind::RecvTimer => 26,
+pub type Result<T> = std::result::Result<T, AppError>;
+
+/// Map error to exit code
+pub fn exit_code(e: &AppError) -> i32 {
+    match e {
+        AppError::Dnsmasq(_) => 3,
+        AppError::ChannelClosed => 7,
+        AppError::DeviceNotFound(_) => 10,
+        AppError::NotAWiFiDevice(_) => 11,
+        AppError::NoWiFiDevice => 12,
+        AppError::CreateCaptivePortal(_) => 14,
+        AppError::StopAccessPoint(_) => 15,
+        AppError::DeleteConnection(_) => 16,
+        AppError::StartHttpServer { .. } => 17,
+        AppError::StartActiveNetworkManager => 18,
+        AppError::StartNetworkManager(_) => 19,
+        AppError::BlockExitSignals(_) => 21,
+        AppError::TrapExitSignals(_) => 22,
+        AppError::RootPrivilegesRequired(_) => 23,
+        AppError::NotAnEthernetDevice(_) => 24,
+        AppError::SetDhcp(_) => 25,
         _ => 1,
     }
 }

@@ -1,484 +1,298 @@
-use std::collections::HashSet;
-use std::error::Error;
 use std::net::Ipv4Addr;
-use std::process;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread;
+use std::process::Child;
+use std::sync::Arc;
 use std::time::Duration;
 
-use config::Config;
-use dnsmasq::{start_dnsmasq, stop_dnsmasq};
-use errors::*;
-use exit::{exit, trap_exit_signals, ExitResult};
-use network_manager::{
-    AccessPoint, AccessPointCredentials, Connection, ConnectionState, Connectivity, Device,
-    DeviceState, DeviceType, EthernetDevice, NetworkManager, Security, ServiceState,
-};
-use server::{start_server, start_timer};
-use std::string::ToString;
+use network_manager::{Connection, Device, DeviceState, DeviceType, NetworkManager, ServiceState};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
 
+use crate::config::Config;
+use crate::dnsmasq::{start_dnsmasq, stop_dnsmasq};
+use crate::errors::{AppError, Result};
+use crate::exit::trap_exit_signals;
+use crate::server::{start_server, start_timer};
+
+/// Commands sent to the network handler
+#[derive(Debug)]
 pub enum NetworkCommand {
-    Timeout,
+    /// Activity timeout (no user connection)
+    ActivityTimeout,
+    /// Overall timeout reached
     OverallTimeout,
+    /// Exit signal received
     Exit,
+    /// User requested DHCP reset
     Reset,
+    /// User accessed the portal (resets activity timeout)
     Activate,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct Network {
-    ssid: String,
-    security: String,
-}
-
-pub enum NetworkCommandResponse {
-    Networks(Vec<Network>),
-    Timer(u64),
-}
-
-struct NetworkCommandHandler {
+/// Main network command handler
+struct NetworkHandler {
     manager: NetworkManager,
-    device: Device,
     eth_device: Device,
     portal_connection: Option<Connection>,
-    config: Config,
-    dnsmasq: process::Child,
-    server_tx: Sender<NetworkCommandResponse>,
-    network_rx: Receiver<NetworkCommand>,
-    activated: bool,
+    config: Arc<Config>,
+    dnsmasq: Child,
+    rx: mpsc::Receiver<NetworkCommand>,
+    user_connected: bool,
 }
 
-impl NetworkCommandHandler {
-    fn new(config: &Config, exit_tx: &Sender<ExitResult>) -> Result<Self> {
-        let (network_tx, network_rx) = channel();
-
-        Self::spawn_trap_exit_signals(exit_tx, network_tx.clone());
-
+impl NetworkHandler {
+    /// Create handler and spawn background tasks
+    async fn new(config: Arc<Config>) -> Result<Self> {
         let manager = NetworkManager::new();
-        debug!("NetworkManager connection initialized");
+        debug!("NetworkManager initialized");
 
-        let device = find_device(&manager, &config.interface)?;
-        let eth_device = find_device(&manager, &Some(String::from("eth0")))?;
+        // Find WiFi device for the access point
+        let wifi_device = find_device(&manager, config.interface.as_deref())?;
 
-        let portal_connection = Some(create_portal(&device, config)?);
+        // Find ethernet device to reset
+        let eth_device = manager
+            .get_device_by_interface(&config.ethernet_interface)
+            .map_err(|_| AppError::DeviceNotFound(config.ethernet_interface.clone()))?;
 
-        let dnsmasq = start_dnsmasq(config, &device)?;
+        // Verify it's actually an ethernet device
+        if eth_device.as_ethernet_device().is_none() {
+            return Err(AppError::NotAnEthernetDevice(
+                config.ethernet_interface.clone(),
+            ));
+        }
 
-        let (server_tx, server_rx) = channel();
+        // Create WiFi access point
+        let portal_connection = Some(create_portal(&wifi_device, &config)?);
 
-        Self::spawn_server(config, exit_tx, server_rx, network_tx.clone());
+        // Start dnsmasq for DHCP/DNS
+        let dnsmasq = start_dnsmasq(&config, &wifi_device)?;
 
-        Self::spawn_activity_timeout(config, network_tx.clone());
+        // Create command channel
+        let (tx, rx) = mpsc::channel(32);
 
-        let config = config.clone();
-        let activated = false;
+        // Spawn background tasks
+        spawn_server(&config, tx.clone());
+        spawn_activity_timeout(config.activity_timeout, tx.clone());
+        spawn_overall_timeout(config.overall_timeout, tx.clone());
+        spawn_signal_handler(tx);
 
-        Ok(NetworkCommandHandler {
+        Ok(Self {
             manager,
-            device,
             eth_device,
             portal_connection,
             config,
             dnsmasq,
-            server_tx,
-            network_rx,
-            activated,
+            rx,
+            user_connected: false,
         })
     }
 
-    fn spawn_server(
-        config: &Config,
-        exit_tx: &Sender<ExitResult>,
-        server_rx: Receiver<NetworkCommandResponse>,
-        network_tx: Sender<NetworkCommand>,
-    ) {
-        let gateway = config.gateway;
-        let listening_port = config.listening_port;
-        let exit_tx_server = exit_tx.clone();
-        let ui_directory = config.ui_directory.clone();
-
-        let overall_timeout = config.overall_timeout;
-
-        if overall_timeout != 0 {
-            let net_tx = network_tx.clone();
-            thread::spawn(move || {
-                start_timer(overall_timeout, net_tx);
-            });
-        }
-
-        thread::spawn(move || {
-            start_server(
-                gateway,
-                listening_port,
-                server_rx,
-                network_tx,
-                exit_tx_server,
-                &ui_directory,
-            );
-        });
-    }
-
-    fn spawn_activity_timeout(config: &Config, network_tx: Sender<NetworkCommand>) {
-        let activity_timeout = config.activity_timeout;
-
-        if activity_timeout == 0 {
-            return;
-        }
-
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(activity_timeout));
-
-            if let Err(err) = network_tx.send(NetworkCommand::Timeout) {
-                error!(
-                    "Sending NetworkCommand::Timeout failed: {}",
-                    err.description()
-                );
-            }
-        });
-    }
-
-    fn spawn_trap_exit_signals(exit_tx: &Sender<ExitResult>, network_tx: Sender<NetworkCommand>) {
-        let exit_tx_trap = exit_tx.clone();
-
-        thread::spawn(move || {
-            if let Err(e) = trap_exit_signals() {
-                exit(&exit_tx_trap, e);
-                return;
-            }
-
-            if let Err(err) = network_tx.send(NetworkCommand::Exit) {
-                error!("Sending NetworkCommand::Exit failed: {}", err.description());
-            }
-        });
-    }
-
-    fn run(&mut self, exit_tx: &Sender<ExitResult>) {
-        let result = self.run_loop();
-        self.stop(exit_tx, result);
-    }
-
-    fn run_loop(&mut self) -> ExitResult {
+    /// Run the main event loop
+    async fn run(&mut self) -> Result<()> {
         loop {
-            let command = self.receive_network_command()?;
+            let Some(cmd) = self.rx.recv().await else {
+                return Err(AppError::ChannelClosed);
+            };
 
-            match command {
+            match cmd {
                 NetworkCommand::Activate => {
-                    if !self.activated {
-                        info!("User connected to the captive portal");
-                        self.activated = true;
+                    if !self.user_connected {
+                        info!("User connected to captive portal");
+                        self.user_connected = true;
                     }
-                },
+                }
                 NetworkCommand::OverallTimeout => {
-                    info!("Overall timeout reached. Exiting...");
+                    info!("Overall timeout reached, exiting");
                     return Ok(());
-                },
-                NetworkCommand::Timeout => {
-                    if !self.activated {
-                        info!("Connect timeout reached. Exiting...");
+                }
+                NetworkCommand::ActivityTimeout => {
+                    if !self.user_connected {
+                        info!("Activity timeout reached, exiting");
                         return Ok(());
                     }
-                },
+                }
                 NetworkCommand::Exit => {
-                    info!("Exiting...");
+                    info!("Exit signal received");
                     return Ok(());
-                },
+                }
                 NetworkCommand::Reset => {
-                    self.set_dhcp();
-                },
+                    self.reset_to_dhcp()?;
+                }
             }
         }
     }
 
-    fn receive_network_command(&self) -> Result<NetworkCommand> {
-        match self.network_rx.recv() {
-            Ok(command) => Ok(command),
-            Err(e) => {
-                // Sleep for a second, so that other threads may log error info.
-                thread::sleep(Duration::from_secs(1));
-                Err(e).chain_err(|| ErrorKind::RecvNetworkCommand)
-            },
+    /// Reset ethernet to DHCP
+    fn reset_to_dhcp(&self) -> Result<()> {
+        info!("Resetting {} to DHCP", self.config.ethernet_interface);
+
+        // Delete existing wired connections
+        if let Ok(connections) = self.manager.get_connections() {
+            for conn in connections {
+                if conn.settings().kind == "802-3-ethernet" {
+                    debug!("Deleting wired connection");
+                    let _ = conn.delete();
+                }
+            }
         }
+
+        // Set DHCP on the ethernet device
+        let ethernet = self
+            .eth_device
+            .as_ethernet_device()
+            .ok_or_else(|| AppError::NotAnEthernetDevice(self.config.ethernet_interface.clone()))?;
+
+        ethernet
+            .set_dhcp()
+            .map_err(|e| AppError::SetDhcp(e.to_string()))?;
+
+        info!("DHCP reset complete");
+        Ok(())
     }
 
-    fn stop(&mut self, exit_tx: &Sender<ExitResult>, result: ExitResult) {
+    /// Cleanup resources
+    fn cleanup(&mut self) {
         let _ = stop_dnsmasq(&mut self.dnsmasq);
 
-        if let Some(ref connection) = self.portal_connection {
-            let _ = stop_portal_impl(connection, &self.config);
+        if let Some(ref conn) = self.portal_connection {
+            info!("Stopping access point '{}'", self.config.ssid);
+            let _ = conn.deactivate();
+            let _ = conn.delete();
         }
-
-        let _ = exit_tx.send(result);
-    }
-
-    fn set_dhcp(&mut self) {
-        info!("DHCP reset requested. Removing all existing wired connections...");
-        delete_existing_wired_connections(&self.manager);
-
-        // let devices = &self.manager.get_devices().unwrap();
-        // for d in devices {
-        //     info!("Path: {} | Type: {} | Interface: {}", d.path(), d.device_type().to_string(), d.interface());
-        //     // let i = devices.iter().position(|ref d| *d.device_type() == DeviceType::Ethernet).unwrap();
-        //     // d.connect().unwrap();
-        // }
-
-        info!("Creating new DHCP connection profile...");
-        let ethernet_device = self.eth_device.as_ethernet_device().unwrap();
-        match ethernet_device.set_dhcp() {
-            Err(e) => {
-                error!("Setting DHCP failed: {}", e.description());
-            },
-            Ok(_) => (),
-        };
     }
 }
 
-fn init_access_point_credentials(
-    access_point: &AccessPoint,
-    identity: &str,
-    passphrase: &str,
-) -> AccessPointCredentials {
-    if access_point.security.contains(Security::ENTERPRISE) {
-        AccessPointCredentials::Enterprise {
-            identity: identity.to_string(),
-            passphrase: passphrase.to_string(),
-        }
-    } else if access_point.security.contains(Security::WPA2)
-        || access_point.security.contains(Security::WPA)
-    {
-        AccessPointCredentials::Wpa {
-            passphrase: passphrase.to_string(),
-        }
-    } else if access_point.security.contains(Security::WEP) {
-        AccessPointCredentials::Wep {
-            passphrase: passphrase.to_string(),
-        }
-    } else {
-        AccessPointCredentials::None
-    }
+/// Main entry point
+pub async fn process_network_commands(config: &Config) -> Result<()> {
+    let config = Arc::new(config.clone());
+    let mut handler = NetworkHandler::new(config).await?;
+
+    let result = handler.run().await;
+    handler.cleanup();
+    result
 }
 
-pub fn process_network_commands(config: &Config, exit_tx: &Sender<ExitResult>) {
-    let mut command_handler = match NetworkCommandHandler::new(config, exit_tx) {
-        Ok(command_handler) => command_handler,
-        Err(e) => {
-            exit(exit_tx, e);
-            return;
-        },
-    };
-
-    command_handler.run(exit_tx);
-}
-
+/// Initialize networking before starting the handler
 pub fn init_networking(config: &Config) -> Result<()> {
     start_network_manager_service()?;
 
-    delete_exising_wifi_connect_ap_profile(&config.ssid).chain_err(|| ErrorKind::DeleteAccessPoint)
-}
-
-pub fn find_device(manager: &NetworkManager, interface: &Option<String>) -> Result<Device> {
-    if let Some(ref interface) = *interface {
-        let device = manager
-            .get_device_by_interface(interface)
-            .chain_err(|| ErrorKind::DeviceByInterface(interface.clone()))?;
-
-        info!("Targeted device: {}", interface);
-
-        Ok(device)
-    } else {
-        let devices = manager.get_devices()?;
-
-        if let Some(device) = find_wifi_managed_device(devices)? {
-            info!("WiFi device: {}", device.interface());
-            Ok(device)
-        } else {
-            bail!(ErrorKind::NoWiFiDevice)
-        }
-    }
-}
-
-fn find_wifi_managed_device(devices: Vec<Device>) -> Result<Option<Device>> {
-    for device in devices {
-        if *device.device_type() == DeviceType::WiFi
-            && device.get_state()? != DeviceState::Unmanaged
-        {
-            return Ok(Some(device));
-        }
-    }
-
-    Ok(None)
-}
-
-fn get_networks(access_points: &[AccessPoint]) -> Vec<Network> {
-    access_points
-        .iter()
-        .map(|ap| get_network_info(ap))
-        .collect()
-}
-
-fn get_network_info(access_point: &AccessPoint) -> Network {
-    Network {
-        ssid: access_point.ssid().as_str().unwrap().to_string(),
-        security: get_network_security(access_point).to_string(),
-    }
-}
-
-fn get_network_security(access_point: &AccessPoint) -> &str {
-    if access_point.security.contains(Security::ENTERPRISE) {
-        "enterprise"
-    } else if access_point.security.contains(Security::WPA2)
-        || access_point.security.contains(Security::WPA)
-    {
-        "wpa"
-    } else if access_point.security.contains(Security::WEP) {
-        "wep"
-    } else {
-        "none"
-    }
-}
-
-fn create_portal(device: &Device, config: &Config) -> Result<Connection> {
-    let portal_passphrase = config.passphrase.as_ref().map(|p| p as &str);
-
-    create_portal_impl(device, &config.ssid, &config.gateway, &portal_passphrase)
-        .chain_err(|| ErrorKind::CreateCaptivePortal)
-}
-
-fn create_portal_impl(
-    device: &Device,
-    ssid: &str,
-    gateway: &Ipv4Addr,
-    passphrase: &Option<&str>,
-) -> Result<Connection> {
-    info!("Starting access point...");
-    let wifi_device = device.as_wifi_device().unwrap();
-    let (portal_connection, _) = wifi_device.create_hotspot(ssid, *passphrase, Some(*gateway))?;
-    info!("Access point '{}' created", ssid);
-    Ok(portal_connection)
-}
-
-fn stop_portal(connection: &Connection, config: &Config) -> Result<()> {
-    stop_portal_impl(connection, config).chain_err(|| ErrorKind::StopAccessPoint)
-}
-
-fn stop_portal_impl(connection: &Connection, config: &Config) -> Result<()> {
-    info!("Stopping access point '{}'...", config.ssid);
-    connection.deactivate()?;
-    connection.delete()?;
-    thread::sleep(Duration::from_secs(1));
-    info!("Access point '{}' stopped", config.ssid);
-    Ok(())
-}
-
-fn wait_for_connectivity(manager: &NetworkManager, timeout: u64) -> Result<bool> {
-    let mut total_time = 0;
-
-    loop {
-        let connectivity = manager.get_connectivity()?;
-
-        if connectivity == Connectivity::Full || connectivity == Connectivity::Limited {
-            debug!(
-                "Connectivity established: {:?} / {}s elapsed",
-                connectivity, total_time
-            );
-
-            return Ok(true);
-        } else if total_time >= timeout {
-            debug!(
-                "Timeout reached in waiting for connectivity: {:?} / {}s elapsed",
-                connectivity, total_time
-            );
-
-            return Ok(false);
-        }
-
-        ::std::thread::sleep(::std::time::Duration::from_secs(1));
-
-        total_time += 1;
-
-        debug!(
-            "Still waiting for connectivity: {:?} / {}s elapsed",
-            connectivity, total_time
-        );
-    }
-}
-
-pub fn start_network_manager_service() -> Result<()> {
-    let state = match NetworkManager::get_service_state() {
-        Ok(state) => state,
-        _ => {
-            info!("Cannot get the NetworkManager service state");
-            return Ok(());
-        },
-    };
-
-    if state != ServiceState::Active {
-        let state =
-            NetworkManager::start_service(15).chain_err(|| ErrorKind::StartNetworkManager)?;
-        if state != ServiceState::Active {
-            bail!(ErrorKind::StartActiveNetworkManager);
-        } else {
-            info!("NetworkManager service started successfully");
-        }
-    } else {
-        debug!("NetworkManager service already running");
-    }
-
-    Ok(())
-}
-
-fn delete_exising_wifi_connect_ap_profile(ssid: &str) -> Result<()> {
+    // Delete any existing AP profile with same SSID
     let manager = NetworkManager::new();
-
-    for connection in &manager.get_connections()? {
-        if is_access_point_connection(connection) && is_same_ssid(connection, ssid) {
-            info!(
-                "Deleting already created by WiFi Connect access point connection profile: {:?}",
-                connection.settings().ssid,
-            );
-            connection.delete()?;
-        }
-    }
-
-    Ok(())
-}
-
-fn delete_existing_wired_connections(manager: &NetworkManager) {
-    let connections = match manager.get_connections() {
-        Ok(connections) => connections,
-        Err(e) => {
-            error!("Getting existing connections failed: {}", e);
-            return;
-        },
-    };
-
-    for connection in &connections {
-        if is_wired_connection(connection) {
-            info!("Deleting existing wired connection");
-
-            if let Err(e) = connection.delete() {
-                error!("Deleting existing wired connection failed: {}", e);
+    if let Ok(connections) = manager.get_connections() {
+        for conn in connections {
+            let settings = conn.settings();
+            if settings.kind == "802-11-wireless"
+                && settings.mode == "ap"
+                && settings.ssid.as_str().ok() == Some(&config.ssid)
+            {
+                info!("Deleting existing AP profile for '{}'", config.ssid);
+                let _ = conn.delete();
             }
         }
     }
+
+    Ok(())
 }
 
-fn is_same_ssid(connection: &Connection, ssid: &str) -> bool {
-    connection_ssid_as_str(connection) == Some(ssid)
+/// Find a WiFi device by interface name or auto-detect
+fn find_device(manager: &NetworkManager, interface: Option<&str>) -> Result<Device> {
+    if let Some(name) = interface {
+        let device = manager
+            .get_device_by_interface(name)
+            .map_err(|_| AppError::DeviceNotFound(name.to_string()))?;
+        info!("Using WiFi device: {}", name);
+        return Ok(device);
+    }
+
+    // Auto-detect first managed WiFi device
+    for device in manager.get_devices()? {
+        if *device.device_type() == DeviceType::WiFi && device.get_state()? != DeviceState::Unmanaged
+        {
+            info!("Auto-detected WiFi device: {}", device.interface());
+            return Ok(device);
+        }
+    }
+
+    Err(AppError::NoWiFiDevice)
 }
 
-fn connection_ssid_as_str(connection: &Connection) -> Option<&str> {
-    // An access point SSID could be random bytes and not a UTF-8 encoded string
-    connection.settings().ssid.as_str().ok()
+/// Create the captive portal AP
+fn create_portal(device: &Device, config: &Config) -> Result<Connection> {
+    info!("Creating access point '{}'", config.ssid);
+
+    let wifi = device
+        .as_wifi_device()
+        .ok_or_else(|| AppError::NotAWiFiDevice(device.interface().to_string()))?;
+
+    let passphrase = config.passphrase.as_deref();
+    let (connection, _) = wifi
+        .create_hotspot(&config.ssid, passphrase, Some(config.gateway))
+        .map_err(|e| AppError::CreateCaptivePortal(e.to_string()))?;
+
+    info!("Access point '{}' created", config.ssid);
+    Ok(connection)
 }
 
-fn is_access_point_connection(connection: &Connection) -> bool {
-    is_wifi_connection(connection) && connection.settings().mode == "ap"
+/// Ensure NetworkManager service is running
+fn start_network_manager_service() -> Result<()> {
+    let Ok(state) = NetworkManager::get_service_state() else {
+        info!("Cannot get NetworkManager state, assuming it's running");
+        return Ok(());
+    };
+
+    if state == ServiceState::Active {
+        debug!("NetworkManager already running");
+        return Ok(());
+    }
+
+    info!("Starting NetworkManager service...");
+    let state =
+        NetworkManager::start_service(15).map_err(|e| AppError::StartNetworkManager(e.to_string()))?;
+
+    if state != ServiceState::Active {
+        return Err(AppError::StartActiveNetworkManager);
+    }
+
+    info!("NetworkManager started");
+    Ok(())
 }
 
-fn is_wifi_connection(connection: &Connection) -> bool {
-    connection.settings().kind == "802-11-wireless"
+// --- Background task spawners ---
+
+fn spawn_server(config: &Config, tx: mpsc::Sender<NetworkCommand>) {
+    let gateway = config.gateway;
+    let port = config.listening_port;
+    let ui_dir = config.ui_directory();
+
+    tokio::spawn(async move {
+        if let Err(e) = start_server(gateway, port, tx, ui_dir).await {
+            error!("HTTP server error: {}", e);
+        }
+    });
 }
 
-fn is_wired_connection(connection: &Connection) -> bool {
-    connection.settings().kind == "802-3-ethernet"
+fn spawn_activity_timeout(timeout: u64, tx: mpsc::Sender<NetworkCommand>) {
+    if timeout == 0 {
+        return;
+    }
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(timeout)).await;
+        let _ = tx.send(NetworkCommand::ActivityTimeout).await;
+    });
+}
+
+fn spawn_overall_timeout(timeout: u64, tx: mpsc::Sender<NetworkCommand>) {
+    if timeout == 0 {
+        return;
+    }
+
+    start_timer(timeout, tx);
+}
+
+fn spawn_signal_handler(tx: mpsc::Sender<NetworkCommand>) {
+    tokio::spawn(async move {
+        if let Err(e) = trap_exit_signals(tx).await {
+            error!("Signal handler error: {}", e);
+        }
+    });
 }

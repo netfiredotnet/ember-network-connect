@@ -1,7 +1,7 @@
 # Dockerfile for building standalone Rust binary
 # Used by CI to extract binaries for each architecture
 
-FROM rust:1.70-bookworm AS builder
+FROM rust:1.83-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -9,18 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Use git CLI instead of libgit2 (fixes issues with old Cargo/libgit2)
-ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
-
 WORKDIR /app
 
-# Copy dependency files (not Cargo.lock - version incompatibility with old Rust)
+# Copy dependency files first for better caching
 COPY Cargo.toml ./
 
 # Create dummy src to build dependencies
-# Clear any cached git refs to avoid stale commit references
-RUN rm -rf /usr/local/cargo/git/db/network-manager-* \
-    && mkdir src && echo "fn main() {}" > src/main.rs \
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
     && rm -rf src
 

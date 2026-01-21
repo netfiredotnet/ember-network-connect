@@ -1,225 +1,131 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::net::Ipv4Addr;
-use std::sync::mpsc::{Receiver, Sender};
+use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use iron::modifiers::Redirect;
-use iron::prelude::*;
-use iron::{
-    headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request, Response, Url,
-};
-use iron_cors::CorsMiddleware;
-use mount::Mount;
-use params::{FromValue, Params};
-use path::PathBuf;
-use persistent::Write;
-use router::Router;
-use serde_json;
-use staticfile::Static;
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
-use errors::*;
-use exit::{exit, ExitResult};
-use network::{NetworkCommand, NetworkCommandResponse};
-use std::sync::Mutex;
+use axum::{
+    extract::State,
+    http::{header, StatusCode, Uri},
+    response::{IntoResponse, Redirect, Response},
+    routing::{get, post},
+    Router,
+};
+use tokio::sync::mpsc;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+use tracing::{error, info};
 
+use crate::network::NetworkCommand;
+
+/// Global timer for countdown
 static TIMER: AtomicU64 = AtomicU64::new(0);
 
-struct RequestSharedState {
+/// Shared state passed to handlers
+#[derive(Clone)]
+pub struct AppState {
     gateway: Ipv4Addr,
-    server_rx: Receiver<NetworkCommandResponse>,
-    network_tx: Sender<NetworkCommand>,
-    exit_tx: Sender<ExitResult>,
+    network_tx: mpsc::Sender<NetworkCommand>,
 }
 
-impl typemap::Key for RequestSharedState {
-    type Value = RequestSharedState;
+/// Start the HTTP server
+pub async fn start_server(
+    gateway: Ipv4Addr,
+    listening_port: u16,
+    network_tx: mpsc::Sender<NetworkCommand>,
+    ui_directory: PathBuf,
+) -> Result<(), std::io::Error> {
+    let state = AppState {
+        gateway,
+        network_tx,
+    };
+
+    // Static file serving for UI
+    let serve_dir = ServeDir::new(&ui_directory)
+        .append_index_html_on_directories(true);
+
+    // Build the router
+    let app = Router::new()
+        .route("/get_timer", get(get_timer))
+        .route("/reset_dhcp", post(reset_dhcp))
+        .nest_service("/static", ServeDir::new(ui_directory.join("static")))
+        .nest_service("/css", ServeDir::new(ui_directory.join("css")))
+        .nest_service("/img", ServeDir::new(ui_directory.join("img")))
+        .nest_service("/js", ServeDir::new(ui_directory.join("js")))
+        .fallback_service(serve_dir)
+        .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            captive_portal_redirect,
+        ))
+        .with_state(state);
+
+    let addr = SocketAddr::new(gateway.into(), listening_port);
+    info!("Starting HTTP server on {}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await
 }
 
-#[derive(Debug)]
-struct StringError(String);
-
-impl fmt::Display for StringError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
-}
-
-impl StdError for StringError {
-    fn description(&self) -> &str {
-        &*self.0
-    }
-}
-
-macro_rules! get_request_ref {
-    ($req:ident, $ty:ty, $err:expr) => {
-        match $req.get_ref::<$ty>() {
-            Ok(val) => val,
-            Err(err) => {
-                error!($err);
-                return Err(IronError::new(err, status::InternalServerError));
-            },
+/// Middleware to redirect captive portal requests to the gateway
+async fn captive_portal_redirect(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    // Check if the Host header matches our gateway
+    if let Some(host) = req.headers().get(header::HOST) {
+        if let Ok(host_str) = host.to_str() {
+            let gateway_str = state.gateway.to_string();
+            // If host doesn't match gateway (captive portal detection), redirect
+            if !host_str.starts_with(&gateway_str) {
+                return Redirect::temporary(&format!("http://{}/", gateway_str)).into_response();
+            }
         }
-    };
+    }
+
+    next.run(req).await
 }
 
-macro_rules! get_param {
-    ($params:ident, $param:expr, $ty:ty) => {
-        match $params.get($param) {
-            Some(value) => match <$ty as FromValue>::from_value(value) {
-                Some(converted) => converted,
-                None => {
-                    let err = format!("Unexpected type for '{}'", $param);
-                    error!("{}", err);
-                    return Err(IronError::new(
-                        StringError(err),
-                        status::InternalServerError,
-                    ));
-                },
-            },
-            None => {
-                let err = format!("'{}' not found in request params: {:?}", $param, $params);
-                error!("{}", err);
-                return Err(IronError::new(
-                    StringError(err),
-                    status::InternalServerError,
-                ));
-            },
-        }
-    };
-}
+/// Start the countdown timer
+pub fn start_timer(secs: u64, network_tx: mpsc::Sender<NetworkCommand>) {
+    TIMER.store(secs, Ordering::Relaxed);
 
-macro_rules! get_request_state {
-    ($req:ident) => {
-        get_request_ref!(
-            $req,
-            Write<RequestSharedState>,
-            "Getting reference to request shared state failed"
-        )
-        .as_ref()
-        .lock()
-        .unwrap()
-    };
-}
-
-fn exit_with_error<E>(state: &RequestSharedState, e: E, e_kind: ErrorKind) -> IronResult<Response>
-where
-    E: ::std::error::Error + Send + 'static,
-{
-    let description = e_kind.description().into();
-    let err = Err::<Response, E>(e).chain_err(|| e_kind);
-    exit(&state.exit_tx, err.unwrap_err());
-    Err(IronError::new(
-        StringError(description),
-        status::InternalServerError,
-    ))
-}
-
-struct RedirectMiddleware;
-
-impl AfterMiddleware for RedirectMiddleware {
-    fn catch(&self, req: &mut Request, err: IronError) -> IronResult<Response> {
-        let gateway = {
-            let request_state = get_request_state!(req);
-            format!("{}", request_state.gateway)
-        };
-
-        if let Some(host) = req.headers.get::<headers::Host>() {
-            if host.hostname != gateway {
-                let url = Url::parse(&format!("http://{}/", gateway)).unwrap();
-                return Ok(Response::with((status::Found, Redirect(url))));
+    tokio::spawn(async move {
+        while TIMER.load(Ordering::Relaxed) > 0 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let current = TIMER.load(Ordering::Relaxed);
+            if current > 0 {
+                TIMER.store(current - 1, Ordering::Relaxed);
             }
         }
 
-        Err(err)
-    }
+        if let Err(e) = network_tx.send(NetworkCommand::OverallTimeout).await {
+            error!("Sending NetworkCommand::OverallTimeout failed: {}", e);
+        }
+    });
 }
 
-pub fn start_server(
-    gateway: Ipv4Addr,
-    listening_port: u16,
-    server_rx: Receiver<NetworkCommandResponse>,
-    network_tx: Sender<NetworkCommand>,
-    exit_tx: Sender<ExitResult>,
-    ui_directory: &PathBuf,
-) {
-    let exit_tx_clone = exit_tx.clone();
-    let gateway_clone = gateway;
-    let request_state = RequestSharedState {
-        gateway: gateway,
-        server_rx: server_rx,
-        network_tx: network_tx,
-        exit_tx: exit_tx,
-    };
-
-    let mut router = Router::new();
-    router.get("/", Static::new(ui_directory), "index");
-    router.post("/reset_dhcp", reset_dhcp, "reset_dhcp");
-    router.get("/get_timer", get_timer, "get_timer");
-
-    let mut assets = Mount::new();
-    assets.mount("/", router);
-    assets.mount("/static", Static::new(&ui_directory.join("static")));
-    assets.mount("/css", Static::new(&ui_directory.join("css")));
-    assets.mount("/img", Static::new(&ui_directory.join("img")));
-    assets.mount("/js", Static::new(&ui_directory.join("js")));
-
-    let cors_middleware = CorsMiddleware::with_allow_any();
-
-    let mut chain = Chain::new(assets);
-    chain.link(Write::<RequestSharedState>::both(request_state));
-    chain.link_after(RedirectMiddleware);
-    chain.link_around(cors_middleware);
-
-    let address = format!("{}:{}", gateway_clone, listening_port);
-
-    info!("Starting HTTP server on {}", &address);
-
-    if let Err(e) = Iron::new(chain).http(&address) {
-        exit(
-            &exit_tx_clone,
-            ErrorKind::StartHTTPServer(address, e.description().into()).into(),
-        );
-    }
-}
-
-pub fn start_timer(secs: u64, network_tx: Sender<NetworkCommand>) {
-    TIMER.store(secs, Ordering::Relaxed);
-    while TIMER.load(Ordering::Relaxed) > 0 {
-        thread::sleep(Duration::from_secs(1));
-        TIMER.store(TIMER.load(Ordering::Relaxed)-1, Ordering::Relaxed);
-    }
-    if let Err(err) = network_tx.send(NetworkCommand::OverallTimeout) {
-        error!(
-            "Sending NetworkCommand::Timeout failed: {}",
-            err.description()
-        );
-    }
-}
-
-fn get_timer(req: &mut Request) -> IronResult<Response> {
-    let request_state = get_request_state!(req);
-
-    if let Err(e) = request_state.network_tx.send(NetworkCommand::Activate) {
-        return exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandActivate);
+/// GET /get_timer - Return the current countdown value
+async fn get_timer(State(state): State<AppState>) -> Result<String, StatusCode> {
+    // Signal that user is active
+    if let Err(e) = state.network_tx.send(NetworkCommand::Activate).await {
+        error!("Sending NetworkCommand::Activate failed: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     let time = TIMER.load(Ordering::Relaxed);
-    Ok(Response::with((status::Ok, time.to_string())))
+    Ok(time.to_string())
 }
 
-fn reset_dhcp(req: &mut Request) -> IronResult<Response> {
-    debug!("Requested DHCP reset");
+/// POST /reset_dhcp - Trigger DHCP reset
+async fn reset_dhcp(State(state): State<AppState>) -> StatusCode {
+    info!("Requested DHCP reset");
 
-    let request_state = get_request_state!(req);
-
-    let command = NetworkCommand::Reset {};
-
-    if let Err(e) = request_state.network_tx.send(command) {
-        exit_with_error(&request_state, e, ErrorKind::SendNetworkCommandReset)
-    } else {
-        Ok(Response::with(status::Ok))
+    if let Err(e) = state.network_tx.send(NetworkCommand::Reset).await {
+        error!("Sending NetworkCommand::Reset failed: {}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR;
     }
+
+    StatusCode::OK
 }
