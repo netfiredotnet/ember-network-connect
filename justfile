@@ -73,3 +73,14 @@ docker-build-binary arch="arm64":
         --platform linux/{{arch}} \
         --output type=local,dest=./out \
         .
+
+# Create and push a git tag based on version in Cargo.toml
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    TAG="v${VERSION}"
+    echo "Creating tag: ${TAG}"
+    git tag "${TAG}"
+    git push origin "${TAG}"
+    echo "Released ${TAG}"
