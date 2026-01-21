@@ -12,12 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy dependency files first for better caching
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 
 # Use git CLI to avoid libgit2 inode overflow on 32-bit builds
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Create dummy src to build dependencies
+# RUN rm -rf /usr/local/cargo/git/db/network-manager-* /usr/local/cargo/git/checkouts/network-manager-* \
+#     && mkdir src && echo "fn main() {}" > src/main.rs \
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
     && rm -rf src
