@@ -225,7 +225,7 @@ fn create_portal(device: &Device, config: &Config) -> Result<Connection> {
 
     let passphrase = config.passphrase.as_deref();
     let (connection, _) = wifi
-        .create_hotspot(&config.ssid, passphrase, Some(config.gateway))
+        .create_hotspot(config.ssid.as_str(), passphrase, Some(config.gateway))
         .map_err(|e| AppError::CreateCaptivePortal(e.to_string()))?;
 
     info!("Access point '{}' created", config.ssid);
