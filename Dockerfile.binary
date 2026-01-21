@@ -14,6 +14,9 @@ WORKDIR /app
 # Copy dependency files first for better caching
 COPY Cargo.toml ./
 
+# Use git CLI to avoid libgit2 inode overflow on 32-bit builds
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+
 # Create dummy src to build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
