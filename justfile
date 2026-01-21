@@ -66,3 +66,10 @@ fmt:
 check:
     cargo check
     cd ui && pnpm run build
+
+# Build binary using Dockerfile.binary (tests CI build locally)
+docker-build-binary arch="arm/v7":
+    docker buildx build -f Dockerfile.binary \
+        --platform linux/{{arch}} \
+        --output type=local,dest=./out \
+        .
