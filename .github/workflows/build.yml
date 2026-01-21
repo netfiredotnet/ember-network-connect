@@ -76,8 +76,7 @@ jobs:
           file: Dockerfile.binary
           platforms: ${{ matrix.platform }}
           outputs: type=local,dest=./out
-          cache-from: type=gha,scope=binary-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=binary-${{ matrix.arch }}
+          no-cache: true
 
       - name: Package binary
         run: |
