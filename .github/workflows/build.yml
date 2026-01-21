@@ -57,8 +57,6 @@ jobs:
             arch: amd64
           - platform: linux/arm64
             arch: arm64
-          - platform: linux/arm/v7
-            arch: armv7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,7 +74,8 @@ jobs:
           file: Dockerfile.binary
           platforms: ${{ matrix.platform }}
           outputs: type=local,dest=./out
-          no-cache: true
+          cache-from: type=gha,scope=binary-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=binary-${{ matrix.arch }}
 
       - name: Package binary
         run: |
@@ -120,18 +119,11 @@ jobs:
           name: binary-arm64
           path: staging/binaries
 
-      - name: Download armv7 binary
-        uses: actions/download-artifact@v4
-        with:
-          name: binary-armv7
-          path: staging/binaries
-
       - name: Extract binaries
         run: |
-          mkdir -p staging/amd64 staging/arm64 staging/armv7
+          mkdir -p staging/amd64 staging/arm64
           tar -xzf staging/binaries/ember-network-connect-linux-amd64.tar.gz -C staging/amd64
           tar -xzf staging/binaries/ember-network-connect-linux-arm64.tar.gz -C staging/arm64
-          tar -xzf staging/binaries/ember-network-connect-linux-armv7.tar.gz -C staging/armv7
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -182,18 +174,6 @@ jobs:
             ui=staging/ui
             scripts=scripts
 
-      - name: Build and push armv7
-        uses: docker/build-push-action@v6
-        with:
-          context: staging/armv7
-          file: Dockerfile.runtime
-          platforms: linux/arm/v7
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-armv7
-          build-contexts: |
-            ui=staging/ui
-            scripts=scripts
-
       - name: Create and push manifest
         run: |
           # Get all tags from metadata
@@ -202,8 +182,7 @@ jobs:
           for TAG in $TAGS; do
             docker buildx imagetools create -t "$TAG" \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-amd64 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-arm64 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-armv7
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-arm64
           done
 
       - name: Clean up intermediate tags
@@ -239,12 +218,6 @@ jobs:
           name: binary-arm64
           path: binaries
 
-      - name: Download armv7 binary
-        uses: actions/download-artifact@v4
-        with:
-          name: binary-armv7
-          path: binaries
-
       - name: Get version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -254,7 +227,6 @@ jobs:
           cd binaries
           mv ember-network-connect-linux-amd64.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
           mv ember-network-connect-linux-arm64.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
-          mv ember-network-connect-linux-armv7.tar.gz ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-armv7.tar.gz
 
       - name: Package UI
         run: |
@@ -266,6 +238,5 @@ jobs:
           files: |
             binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
             binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
-            binaries/ember-network-connect-${{ steps.version.outputs.VERSION }}-linux-armv7.tar.gz
             ember-network-connect-ui-${{ steps.version.outputs.VERSION }}.tar.gz
           generate_release_notes: true
