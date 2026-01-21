@@ -18,7 +18,9 @@ WORKDIR /app
 COPY Cargo.toml ./
 
 # Create dummy src to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs \
+# Clear any cached git refs to avoid stale commit references
+RUN rm -rf /usr/local/cargo/git/db/network-manager-* \
+    && mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo fetch \
     && rm -rf src
 
