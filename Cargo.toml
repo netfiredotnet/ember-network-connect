@@ -1,6 +1,6 @@
 [package]
 name = "ember-network-connect"
-version = "4.12.0"
+version = "0.0.0-dev"
 edition = "2021"
 authors = ["Zahari Petkov <zahari@balena.io>", "Brett Wilson <brett.wilson@netfire.net>"]
 description = "Captive portal for resetting network settings to DHCP"

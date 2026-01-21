@@ -66,9 +66,8 @@ services:
 
 Download pre-built binaries from the [Releases](https://github.com/netfiredotnet/ember-network-connect/releases) page:
 
-- `ember-network-connect-vX.Y.Z-linux-amd64.tar.gz`
-- `ember-network-connect-vX.Y.Z-linux-arm64.tar.gz`
-- `ember-network-connect-vX.Y.Z-linux-armv7.tar.gz`
+- `ember-network-connect-vX.Y.Z-linux-amd64.tar.gz` - x86_64
+- `ember-network-connect-vX.Y.Z-linux-arm64.tar.gz` - 64-bit ARM (Raspberry Pi 4/5 with 64-bit OS)
 
 ---
 
@@ -140,8 +139,10 @@ just --list
 | `just dev-ui` | Run UI dev server with mock API |
 | `just dev-ui-backend <url>` | Run UI dev server connected to real backend |
 | `just docker-build` | Build Docker image for current architecture |
+| `just docker-build-binary` | Test CI binary build locally (arm64 default) |
 | `just lint` | Run all linters |
 | `just clean` | Remove all build artifacts |
+| `just release <version>` | Create and push a git tag to trigger release |
 
 ### Project Structure
 
@@ -162,21 +163,28 @@ just --list
 
 The project uses GitHub Actions for continuous integration:
 
-- **On push to master**: Builds and pushes Docker image tagged `latest`
-- **On version tag (v\*)**: Creates GitHub Release with binaries, pushes Docker image with version tag
+- **On push/PR**: Builds UI and binaries to verify compilation
+- **On version tag (v\*)**: Publishes Docker image to GHCR and creates GitHub Release
 
 ### Creating a Release
 
 ```bash
-# Tag a new version
-git tag v4.10.1
-git push origin v4.10.1
+# Using just (recommended)
+just release 4.12.0
+
+# Or manually
+git tag v4.12.0
+git push origin v4.12.0
 ```
 
 This triggers the CI to:
-1. Build binaries for amd64, arm64, armv7
-2. Build and push multi-arch Docker image to GHCR
+1. Build binaries for amd64 and arm64
+2. Build and push multi-arch Docker image to GHCR (tagged `latest`, `4.12.0`, `4.12`)
 3. Create GitHub Release with downloadable tarballs
+
+### Versioning
+
+The version in `Cargo.toml` is intentionally set to `0.0.0-dev`. **Git tags are the source of truth for versioning.** This approach keeps `Cargo.lock` stable across releases, allowing Docker layer caching to work effectively for faster builds.
 
 ---
 
